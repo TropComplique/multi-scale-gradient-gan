@@ -114,7 +114,7 @@ class MinibatchStdDev(nn.Module):
         return x
 
 
-class InitialGeneratorBlock(th.nn.Module):
+class InitialGeneratorBlock(nn.Module):
 
     def __init__(self, num_channels):
         super().__init__()
@@ -174,7 +174,7 @@ class DiscriminatorBlock(nn.Module):
             nn.LeakyReLU(0.2),
             Conv2d(out_channels, out_channels, 3, padding=1),
             nn.LeakyReLU(0.2),
-            AvgPool2d(2)
+            nn.AvgPool2d(2)
         )
 
     def forward(self, x):
@@ -227,8 +227,8 @@ class Generator(nn.Module):
             to_rgb.append(converter)
 
         """
-        If depth = 6 then
-        tuples (i, output shape of a block) are:
+        If depth = 6 then tuples
+        (i, output shape of a block) are:
         0, [b, 512, 8, 8]
         1, [b, 256, 16, 16]
         2, [b, 128, 32, 32]
@@ -243,7 +243,7 @@ class Generator(nn.Module):
     def forward(self, z):
         """
         Arguments:
-            z: a float tensor with shape [b, num_channels].
+            z: a float tensor with shape [b, z_dimension].
         Returns:
             a list with float tensors. Where `i`-th tensor
             has shape [b, 3, s, s] with s = 4 * (2 ** i).
@@ -259,34 +259,36 @@ class Generator(nn.Module):
         return outputs
 
 
-class Discriminator(th.nn.Module):
+class Discriminator(nn.Module):
 
-    def __init__(self, depth=6, feature_size=512):
+    def __init__(self, depth=6):
         super().__init__()
 
+        assert depth >= 5
         from_rgb = [Conv2d(3, 16, 1)]
         progression = [DiscriminatorBlock(16, 32)]
 
         for i in range(1, depth):
 
-            in_channels = min(2 ** (4 + i), 512)
-            out_channels = min(2 ** (4 + i + 1), 512)
+            in_channels = min(2 ** (4 + i), 256)
+            out_channels = min(2 ** (4 + i + 1), 256)
 
             from_rgb.append(Conv2d(3, in_channels, 1))
             progression.append(DiscriminatorBlock(2 * in_channels, out_channels))
 
         """
-        If depth = 6 then
-        tuples (i, output shape) are:
-        0, [b, 512, 8, 8]
-        1, [b, 256, 16, 16]
+        If depth = 6 then tuples
+        (i, output shape of a block) are:
+        1, [b, 64, 64, 64]
         2, [b, 128, 32, 32]
-        3, [b, 64, 64, 64]
-        4, [b, 32, 128, 128]
-        5, [b, 16, 256, 256]
+        3, [b, 256, 16, 16]
+        4, [b, 256, 8, 8]
+        5, [b, 256, 4, 4]
         """
 
-        self.final_block = FinalDiscriminatorBlock()
+        self.final_from_rgb = Conv2d(3, out_channels, 1)
+        self.final_block = FinalDiscriminatorBlock(2 * out_channels)
+
         self.progression = ModuleList(progression)
         self.from_rgb = ModuleList(from_rgb)
 
@@ -301,24 +303,24 @@ class Discriminator(th.nn.Module):
         """
 
         x = inputs[depth]
-        x = from_rgb[0](x)
+        x = self.from_rgb[0](x)
         # it has shape [b, 16, s, s],
         # where s = 4 * (2 ** depth)
 
-        x = progression[0](x)
+        x = self.progression[0](x)
         # it has shape [b, 32, s / 2, s / 2]
 
         for i in range(1, depth):
 
-            f = from_rgb[i](inputs[depth - i])
+            f = self.from_rgb[i](inputs[depth - i])
             x = torch.cat([x, f], dim=1)
 
             # x has spatial size s x s,
             # where s = 4 * 2 ** (depth - i).
 
-            x = progression[i](x)
+            x = self.progression[i](x)
 
-        f = from_rgb[depth + 1](inputs[0])
+        f = self.final_from_rgb(inputs[0])
         x = torch.cat([x, f], dim=1)
         # it has spatial size 4 x 4
 

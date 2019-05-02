@@ -1,27 +1,29 @@
 import torch
 from torch import optim
 from torch.nn import functional as F
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Dataset
 from torchvision import transforms
 
+import math
+from PIL import Image
 from tqdm import tqdm
 from networks import Generator, Discriminator
 
 
 Z_DIMENSION = 512
 IMAGE_SIZE = 256
+DEPTH = int(math.log2(IMAGE_SIZE)) - 2
 BATCH_SIZE = 20
 NUM_ITERATIONS = 3000000
 
-dataset = None
-
-generator = Generator(code_size).to(DEVICE)
-discriminator = Discriminator().to(DEVICE)
+dataset = Images(folder='')
+generator = Generator(DEPTH, Z_DIMENSION).to(DEVICE)
+discriminator = Discriminator(depth).to(DEVICE)
 
 g_optimizer = optim.Adam(generator.parameters(), lr=3e-3, betas=(0.0, 0.99))
 d_optimizer = optim.Adam(discriminator.parameters(), lr=3e-3, betas=(0.0, 0.99))
 
-generator_ema = Generator(code_size).to(DEVICE)
+generator_ema = Generator(DEPTH, Z_DIMENSION).to(DEVICE)
 accumulate(generator_ema, generator, 0.0)
 
 
@@ -37,6 +39,27 @@ def accumulate(model_accumulator, model, decay=0.999):
 
     for k in params.keys():
         ema_params[k].data.mul_(decay).add_(1.0 - decay, params[k].data)
+
+
+class Images(Dataset):
+
+    def __init__(self, folder):
+        """
+        Arguments:
+            folder: a string, the path to a folder with images.
+        """
+        self.names = os.listdir(folder)
+        self.folder = folder
+
+    def __len__(self):
+        return len(self.names)
+
+    def __getitem__(self, i):
+        """
+        """
+        name = self.names[i]
+        path = os.path.join(self.folder, name)
+        return Image.open(path)
 
 
 def get_data_loader():
@@ -66,7 +89,7 @@ def train():
         try:
             images = next(data_loader)
             # it has shape [b, 3, h, w],
-            # where h = w = resolution
+            # where h = w = IMAGE_SIZE
 
         except (OSError, StopIteration):
 
@@ -85,29 +108,27 @@ def train():
 
         b = images.shape[0]
         images = images.to(DEVICE)
-        # it has shape [b, 3, h, w],
-        # where h = w = resolution
 
         downsampled = [
-            F.avg_pool2d(images, int(np.power(2, i)))
-            for i in range(1, DEPTH)
+            F.avg_pool2d(images, 2 ** i)
+            for i in reversed(range(1, DEPTH + 1))
         ]
-        images = [images] + downsampled
+        images = downsampled + [images]
 
         z = torch.randn(b, Z_DIMENSION, device=DEVICE)
-        fake_images = generator(z)
-        # it has shape [b, 3, h, w]
+        fake_images = generator(z).detach()
 
         real_scores = discriminator(images)
         fake_scores = discriminator(fake_images)
+        # they have shape [b]
 
         r = real_scores - fake_scores.mean()
         f = fake_scores - real_scores.mean()
         discriminator_loss = F.relu(1.0 - r).mean() + F.relu(1.0 + f).mean()
+
+        discriminator.zero_grad()
         discriminator_loss.backward()
         d_optimizer.step()
-
-        generator.zero_grad()
 
         requires_grad(generator, True)
         requires_grad(discriminator, False)
@@ -117,22 +138,18 @@ def train():
 
         r = real_scores - fake_scores.mean()
         f = fake_scores - real_scores.mean()
-
         generator_loss = F.relu(1.0 + r).mean() + F.relu(1.0 - f).mean()
 
+        generator.zero_grad()
         generator_loss.backward()
         g_optimizer.step()
-        accumulate(g_running, generator.module)
 
         requires_grad(generator, False)
         requires_grad(discriminator, True)
+        accumulate(generator_ema, generator)
 
-        state_msg = (
-            f'Size: {4 * 2 ** step}; G: {gen_loss_val:.3f}; D: {disc_loss_val:.3f};'
-            f' Grad: {grad_loss_val:.3f}; Alpha: {alpha:.5f}'
-        )
-
-        pbar.set_description(state_msg)
+        description = f'epoch: {epoch}, generator: {generator_loss.item():.3f}, discriminator: {discriminator_loss.item():.3f}'
+        progress_bar.set_description(description)
 
 
 train()
