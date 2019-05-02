@@ -212,8 +212,8 @@ class Generator(nn.Module):
         super().__init__()
 
         assert depth >= 5
-        progression = [GenInitialBlock(z_dimension)]
-        to_rgb = [to_rgb(z_dimension)]
+        progression = [InitialGeneratorBlock(z_dimension)]
+        to_rgb = [Conv2d(z_dimension, 3, 1)]
 
         for i in range(depth):
 
@@ -237,8 +237,8 @@ class Generator(nn.Module):
         5, [b, 16, 256, 256]
         """
 
-        self.progression = ModuleList(progression)
-        self.to_rgb = ModuleList(to_rgb)
+        self.progression = nn.ModuleList(progression)
+        self.to_rgb = nn.ModuleList(to_rgb)
 
     def forward(self, z):
         """
@@ -289,8 +289,8 @@ class Discriminator(nn.Module):
         self.final_from_rgb = Conv2d(3, out_channels, 1)
         self.final_block = FinalDiscriminatorBlock(2 * out_channels)
 
-        self.progression = ModuleList(progression)
-        self.from_rgb = ModuleList(from_rgb)
+        self.progression = nn.ModuleList(progression)
+        self.from_rgb = nn.ModuleList(from_rgb)
 
     def forward(self, inputs):
         """
@@ -301,7 +301,8 @@ class Discriminator(nn.Module):
         Returns:
             a float tensor with shape [b].
         """
-
+        
+        depth = len(self.progression)
         x = inputs[depth]
         x = self.from_rgb[0](x)
         # it has shape [b, 16, s, s],

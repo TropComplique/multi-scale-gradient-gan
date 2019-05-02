@@ -5,6 +5,7 @@ from torch.utils.data import DataLoader, Dataset
 from torchvision import transforms
 
 import math
+import os
 from PIL import Image
 from tqdm import tqdm
 from networks import Generator, Discriminator
@@ -14,22 +15,8 @@ Z_DIMENSION = 512
 IMAGE_SIZE = 256
 DEPTH = int(math.log2(IMAGE_SIZE)) - 2
 BATCH_SIZE = 20
-NUM_ITERATIONS = 3000000
-
-dataset = Images(folder='')
-generator = Generator(DEPTH, Z_DIMENSION).to(DEVICE)
-discriminator = Discriminator(depth).to(DEVICE)
-
-g_optimizer = optim.Adam(generator.parameters(), lr=3e-3, betas=(0.0, 0.99))
-d_optimizer = optim.Adam(discriminator.parameters(), lr=3e-3, betas=(0.0, 0.99))
-
-generator_ema = Generator(DEPTH, Z_DIMENSION).to(DEVICE)
-accumulate(generator_ema, generator, 0.0)
-
-
-def requires_grad(model, flag):
-    for p in model.parameters():
-        p.requires_grad = flag
+NUM_ITERATIONS = 300000
+DEVICE = torch.device('cuda:0')
 
 
 def accumulate(model_accumulator, model, decay=0.999):
@@ -50,6 +37,13 @@ class Images(Dataset):
         """
         self.names = os.listdir(folder)
         self.folder = folder
+        
+        self.transform = transforms.Compose([
+            transforms.Resize(IMAGE_SIZE),
+            transforms.RandomHorizontalFlip(),
+            transforms.RandomVerticalFlip(),
+            transforms.ToTensor()
+        ])
 
     def __len__(self):
         return len(self.names)
@@ -59,19 +53,28 @@ class Images(Dataset):
         """
         name = self.names[i]
         path = os.path.join(self.folder, name)
-        return Image.open(path)
+        image = Image.open(path).convert('RGB')
+        #w, h = image.size
+        #assert w > 256 and h > 256, f'size: {w}, {h}'
+        return self.transform(image)
+    
+dataset = Images(folder='/home/dan/work/feidegger/patterns/images/')
+generator = Generator(DEPTH, Z_DIMENSION).to(DEVICE)
+discriminator = Discriminator(DEPTH).to(DEVICE)
+
+g_optimizer = optim.Adam(generator.parameters(), lr=3e-3, betas=(0.0, 0.99))
+d_optimizer = optim.Adam(discriminator.parameters(), lr=3e-3, betas=(0.0, 0.99))
+
+generator_ema = Generator(DEPTH, Z_DIMENSION).to(DEVICE)
+accumulate(generator_ema, generator, 0.0)
+
+
+def requires_grad(model, flag):
+    for p in model.parameters():
+        p.requires_grad = flag
 
 
 def get_data_loader():
-
-    transform = transforms.Compose([
-        transforms.RandomCrop(IMAGE_SIZE),
-        transforms.RandomHorizontalFlip(),
-        transforms.RandomVerticalFlip(),
-        transforms.ToTensor()
-    ])
-
-    dataset.transform = transform
     loader = DataLoader(dataset, shuffle=True, batch_size=BATCH_SIZE, num_workers=8)
     return loader
 
@@ -80,6 +83,9 @@ def train():
 
     epoch = 1
     progress_bar = tqdm(range(NUM_ITERATIONS))
+    
+    loader = get_data_loader()
+    data_loader = iter(loader)
 
     requires_grad(generator, False)
     requires_grad(discriminator, True)
@@ -116,8 +122,10 @@ def train():
         images = downsampled + [images]
 
         z = torch.randn(b, Z_DIMENSION, device=DEVICE)
-        fake_images = generator(z).detach()
-
+        #with torch.no_grad():
+        fake_images = generator(z)
+        #fake_images = [x.detach() for x in fake_images]
+        
         real_scores = discriminator(images)
         fake_scores = discriminator(fake_images)
         # they have shape [b]
@@ -135,7 +143,8 @@ def train():
 
         fake_images = generator(z)
         fake_scores = discriminator(fake_images)
-
+        
+        real_scores = real_scores.detach()
         r = real_scores - fake_scores.mean()
         f = fake_scores - real_scores.mean()
         generator_loss = F.relu(1.0 + r).mean() + F.relu(1.0 - f).mean()
