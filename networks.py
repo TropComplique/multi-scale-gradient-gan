@@ -160,7 +160,7 @@ class GeneratorBlock(nn.Module):
         )
 
     def forward(self, x):
-        x = F.interpolate(x, scale_factor=2, mode='bilinear')
+        x = F.interpolate(x, scale_factor=2, mode='bilinear', align_corners=False)
         return self.layers(x)
 
 
@@ -270,8 +270,8 @@ class Discriminator(nn.Module):
 
         for i in range(1, depth):
 
-            in_channels = min(2 ** (4 + i), 256)
-            out_channels = min(2 ** (4 + i + 1), 256)
+            in_channels = min(2 ** (4 + i), 128)
+            out_channels = min(2 ** (4 + i + 1), 128)
 
             from_rgb.append(Conv2d(3, in_channels, 1))
             progression.append(DiscriminatorBlock(2 * in_channels, out_channels))

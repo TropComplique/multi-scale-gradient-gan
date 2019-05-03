@@ -18,7 +18,7 @@ IMAGE_SIZE = 256
 DEPTH = int(math.log2(IMAGE_SIZE)) - 2
 BATCH_SIZE = 20
 NUM_ITERATIONS = 300000
-DEVICE = torch.device('cuda:0')
+DEVICE = torch.device('cuda:1')
 
 
 def train():
