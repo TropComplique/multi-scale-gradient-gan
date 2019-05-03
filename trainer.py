@@ -10,6 +10,8 @@ from PIL import Image
 from tqdm import tqdm
 from networks import Generator, Discriminator
 
+from torch.backends import cudnn
+cudnn.benchmark = True
 
 Z_DIMENSION = 512
 IMAGE_SIZE = 256
@@ -19,73 +21,23 @@ NUM_ITERATIONS = 300000
 DEVICE = torch.device('cuda:0')
 
 
-def accumulate(model_accumulator, model, decay=0.999):
-
-    params = dict(model.named_parameters())
-    ema_params = dict(model_accumulator.named_parameters())
-
-    for k in params.keys():
-        ema_params[k].data.mul_(decay).add_(1.0 - decay, params[k].data)
-
-
-class Images(Dataset):
-
-    def __init__(self, folder):
-        """
-        Arguments:
-            folder: a string, the path to a folder with images.
-        """
-        self.names = os.listdir(folder)
-        self.folder = folder
-        
-        self.transform = transforms.Compose([
-            transforms.Resize(IMAGE_SIZE),
-            transforms.RandomHorizontalFlip(),
-            transforms.RandomVerticalFlip(),
-            transforms.ToTensor()
-        ])
-
-    def __len__(self):
-        return len(self.names)
-
-    def __getitem__(self, i):
-        """
-        """
-        name = self.names[i]
-        path = os.path.join(self.folder, name)
-        image = Image.open(path).convert('RGB')
-        #w, h = image.size
-        #assert w > 256 and h > 256, f'size: {w}, {h}'
-        return self.transform(image)
-    
-dataset = Images(folder='/home/dan/work/feidegger/patterns/images/')
-generator = Generator(DEPTH, Z_DIMENSION).to(DEVICE)
-discriminator = Discriminator(DEPTH).to(DEVICE)
-
-g_optimizer = optim.Adam(generator.parameters(), lr=3e-3, betas=(0.0, 0.99))
-d_optimizer = optim.Adam(discriminator.parameters(), lr=3e-3, betas=(0.0, 0.99))
-
-generator_ema = Generator(DEPTH, Z_DIMENSION).to(DEVICE)
-accumulate(generator_ema, generator, 0.0)
-
-
-def requires_grad(model, flag):
-    for p in model.parameters():
-        p.requires_grad = flag
-
-
-def get_data_loader():
-    loader = DataLoader(dataset, shuffle=True, batch_size=BATCH_SIZE, num_workers=8)
-    return loader
-
-
 def train():
 
     epoch = 1
     progress_bar = tqdm(range(NUM_ITERATIONS))
-    
-    loader = get_data_loader()
+
+    dataset = Images(folder='/home/dan/work/feidegger/patterns/images/')
+    loader = DataLoader(dataset, shuffle=True, batch_size=BATCH_SIZE, num_workers=8)
     data_loader = iter(loader)
+
+    generator = Generator(DEPTH, Z_DIMENSION).to(DEVICE)
+    discriminator = Discriminator(DEPTH).to(DEVICE)
+
+    g_optimizer = optim.Adam(generator.parameters(), lr=3e-3, betas=(0.0, 0.99))
+    d_optimizer = optim.Adam(discriminator.parameters(), lr=3e-3, betas=(0.0, 0.99))
+
+    generator_ema = Generator(DEPTH, Z_DIMENSION).to(DEVICE)
+    accumulate(generator_ema, generator, 0.0)
 
     requires_grad(generator, False)
     requires_grad(discriminator, True)
@@ -100,10 +52,8 @@ def train():
         except (OSError, StopIteration):
 
             state = {
-                'generator': generator.module.state_dict(),
-                'discriminator': discriminator.module.state_dict(),
-                'g_optimizer': g_optimizer.state_dict(),
-                'd_optimizer': d_optimizer.state_dict()
+                'generator': generator.state_dict(),
+                'generator_ema': generator_ema.state_dict(),
             }
             torch.save(state, f'checkpoints/train_epoch-{epoch}.model')
 
@@ -122,10 +72,9 @@ def train():
         images = downsampled + [images]
 
         z = torch.randn(b, Z_DIMENSION, device=DEVICE)
-        #with torch.no_grad():
+        z = (Z_DIMENSION ** 0.5) * z / z.norm(p=2, dim=1, keepdim=True)
         fake_images = generator(z)
-        #fake_images = [x.detach() for x in fake_images]
-        
+
         real_scores = discriminator(images)
         fake_scores = discriminator(fake_images)
         # they have shape [b]
@@ -134,7 +83,7 @@ def train():
         f = fake_scores - real_scores.mean()
         discriminator_loss = F.relu(1.0 - r).mean() + F.relu(1.0 + f).mean()
 
-        discriminator.zero_grad()
+        d_optimizer.zero_grad()
         discriminator_loss.backward()
         d_optimizer.step()
 
@@ -143,13 +92,13 @@ def train():
 
         fake_images = generator(z)
         fake_scores = discriminator(fake_images)
-        
+
         real_scores = real_scores.detach()
         r = real_scores - fake_scores.mean()
         f = fake_scores - real_scores.mean()
         generator_loss = F.relu(1.0 + r).mean() + F.relu(1.0 - f).mean()
 
-        generator.zero_grad()
+        g_optimizer.zero_grad()
         generator_loss.backward()
         g_optimizer.step()
 
@@ -159,6 +108,58 @@ def train():
 
         description = f'epoch: {epoch}, generator: {generator_loss.item():.3f}, discriminator: {discriminator_loss.item():.3f}'
         progress_bar.set_description(description)
+
+
+def accumulate(model_accumulator, model, decay=0.999):
+
+    params = dict(model.named_parameters())
+    ema_params = dict(model_accumulator.named_parameters())
+
+    for k in params.keys():
+        ema_params[k].data.mul_(decay).add_(1.0 - decay, params[k].data)
+
+
+def requires_grad(model, flag):
+    for p in model.parameters():
+        p.requires_grad = flag
+
+
+class Images(Dataset):
+
+    def __init__(self, folder):
+        """
+        Arguments:
+            folder: a string, the path to a folder with images.
+        """
+
+        self.names = os.listdir(folder)
+        self.folder = folder
+
+        self.transform = transforms.Compose([
+            transforms.RandomCrop(IMAGE_SIZE),
+            transforms.RandomHorizontalFlip(),
+            transforms.RandomVerticalFlip(),
+            transforms.ToTensor()
+        ])
+
+    def __len__(self):
+        return len(self.names)
+
+    def __getitem__(self, i):
+        """
+        Returns:
+            a float tensor with shape [3, h, w].
+            It represents a RGB image with
+            pixel values in [-1, 1] range.
+        """
+
+        name = self.names[i]
+        path = os.path.join(self.folder, name)
+        image = Image.open(path).convert('RGB')
+
+        x = self.transform(image)
+        x = 2.0 * x - 1.0
+        return x
 
 
 train()

@@ -301,8 +301,8 @@ class Discriminator(nn.Module):
         Returns:
             a float tensor with shape [b].
         """
-        
         depth = len(self.progression)
+
         x = inputs[depth]
         x = self.from_rgb[0](x)
         # it has shape [b, 16, s, s],
