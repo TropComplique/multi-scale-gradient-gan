@@ -13,6 +13,7 @@ from networks import Generator, Discriminator
 from torch.backends import cudnn
 cudnn.benchmark = True
 
+
 Z_DIMENSION = 512
 IMAGE_SIZE = 256
 DEPTH = int(math.log2(IMAGE_SIZE)) - 2
@@ -31,16 +32,13 @@ def train():
     data_loader = iter(loader)
 
     generator = Generator(DEPTH, Z_DIMENSION).to(DEVICE)
-    discriminator = Discriminator(DEPTH).to(DEVICE)
+    discriminator = Discriminator(DEPTH, max_channels=256).to(DEVICE)
 
     g_optimizer = optim.Adam(generator.parameters(), lr=3e-3, betas=(0.0, 0.99))
     d_optimizer = optim.Adam(discriminator.parameters(), lr=3e-3, betas=(0.0, 0.99))
 
     generator_ema = Generator(DEPTH, Z_DIMENSION).to(DEVICE)
     accumulate(generator_ema, generator, 0.0)
-
-    requires_grad(generator, False)
-    requires_grad(discriminator, True)
 
     for i in progress_bar:
 
@@ -76,7 +74,7 @@ def train():
         fake_images = generator(z)
 
         real_scores = discriminator(images)
-        fake_scores = discriminator(fake_images)
+        fake_scores = discriminator([x.detach() for x in fake_images])
         # they have shape [b]
 
         r = real_scores - fake_scores.mean()
@@ -87,13 +85,11 @@ def train():
         discriminator_loss.backward()
         d_optimizer.step()
 
-        requires_grad(generator, True)
         requires_grad(discriminator, False)
 
-        fake_images = generator(z)
+        real_scores = discriminator(images)
         fake_scores = discriminator(fake_images)
 
-        real_scores = real_scores.detach()
         r = real_scores - fake_scores.mean()
         f = fake_scores - real_scores.mean()
         generator_loss = F.relu(1.0 + r).mean() + F.relu(1.0 - f).mean()
@@ -102,7 +98,6 @@ def train():
         generator_loss.backward()
         g_optimizer.step()
 
-        requires_grad(generator, False)
         requires_grad(discriminator, True)
         accumulate(generator_ema, generator)
 

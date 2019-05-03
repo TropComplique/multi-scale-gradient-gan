@@ -261,7 +261,7 @@ class Generator(nn.Module):
 
 class Discriminator(nn.Module):
 
-    def __init__(self, depth=6):
+    def __init__(self, depth=6, max_channels=256):
         super().__init__()
 
         assert depth >= 5
@@ -270,15 +270,15 @@ class Discriminator(nn.Module):
 
         for i in range(1, depth):
 
-            in_channels = min(2 ** (4 + i), 128)
-            out_channels = min(2 ** (4 + i + 1), 128)
+            in_channels = min(2 ** (4 + i), max_channels)
+            out_channels = min(2 ** (4 + i + 1), max_channels)
 
             from_rgb.append(Conv2d(3, in_channels, 1))
             progression.append(DiscriminatorBlock(2 * in_channels, out_channels))
 
         """
-        If depth = 6 then tuples
-        (i, output shape of a block) are:
+        If depth = 6 and max_channels = 256 then
+        tuples (i, output shape of a block) are:
         1, [b, 64, 64, 64]
         2, [b, 128, 32, 32]
         3, [b, 256, 16, 16]
