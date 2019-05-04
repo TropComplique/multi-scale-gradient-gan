@@ -14,12 +14,12 @@ from torch.backends import cudnn
 cudnn.benchmark = True
 
 
-Z_DIMENSION = 512
-IMAGE_SIZE = 256
+IMAGE_SIZE = 256  # it must be a power of two
 DEPTH = int(math.log2(IMAGE_SIZE)) - 2
 BATCH_SIZE = 32
 NUM_ITERATIONS = 1000000
 DEVICE = torch.device('cuda:0')
+IMAGES_PATH = '/home/dan/work/feidegger/patterns/images/'
 
 
 def train():
@@ -27,7 +27,7 @@ def train():
     epoch = 1
     progress_bar = tqdm(range(NUM_ITERATIONS))
 
-    dataset = Images(folder='/home/dan/work/feidegger/patterns/images/')
+    dataset = Images(folder=IMAGES_PATH)
     loader = DataLoader(dataset, shuffle=True, batch_size=BATCH_SIZE, num_workers=8)
     data_loader = iter(loader)
 
@@ -49,11 +49,10 @@ def train():
 
         except (OSError, StopIteration):
 
-            state = {
-                'generator': generator.state_dict(),
-                'generator_ema': generator_ema.state_dict(),
-            }
-            torch.save(state, f'checkpoints/train_epoch-{epoch}.model')
+            # save every fifth epoch
+            if epoch % 5 == 0:
+                state = {'generator': generator.state_dict(), 'generator_ema': generator_ema.state_dict()}
+                torch.save(state, f'checkpoints/train_epoch-{epoch}.model')
 
             # start a new epoch
             data_loader = iter(loader)
@@ -71,12 +70,16 @@ def train():
         # from lowest to biggest resolution
         images = downsampled[::-1]
 
-        z = torch.randn(b, Z_DIMENSION, device=DEVICE)
-        z = (Z_DIMENSION ** 0.5) * z / z.norm(p=2, dim=1, keepdim=True)
+        z_dimension = 512
+        z = torch.randn(b, z_dimension, device=DEVICE)
+        z = (z_dimension ** 0.5) * z / z.norm(p=2, dim=1, keepdim=True)
+        # now `sum(z**2, axis=1)` is equal to `z_dimension`
+
         fake_images = generator(z)
+        fake_images_detached = [x.detach() for x in fake_images]
 
         real_scores = discriminator(images)
-        fake_scores = discriminator([x.detach() for x in fake_images])
+        fake_scores = discriminator(fake_images_detached)
         # they have shape [b]
 
         r = real_scores - fake_scores.mean()
@@ -91,6 +94,7 @@ def train():
 
         real_scores = discriminator(images)
         fake_scores = discriminator(fake_images)
+        # they have shape [b]
 
         r = real_scores - fake_scores.mean()
         f = fake_scores - real_scores.mean()
@@ -103,7 +107,9 @@ def train():
         requires_grad(discriminator, True)
         accumulate(generator_ema, generator)
 
-        description = f'epoch: {epoch}, generator: {generator_loss.item():.3f}, discriminator: {discriminator_loss.item():.3f}'
+        g = generator_loss.item()
+        d = discriminator_loss.item()
+        description = f'epoch: {epoch}, generator: {g:.3f}, discriminator: {d:.6f}'
         progress_bar.set_description(description)
 
 
@@ -133,6 +139,7 @@ class Images(Dataset):
         self.folder = folder
 
         self.transform = transforms.Compose([
+            # transforms.Resize(IMAGE_SIZE),
             transforms.RandomCrop(IMAGE_SIZE),
             transforms.RandomHorizontalFlip(),
             transforms.RandomVerticalFlip(),
