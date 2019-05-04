@@ -17,9 +17,9 @@ cudnn.benchmark = True
 Z_DIMENSION = 512
 IMAGE_SIZE = 256
 DEPTH = int(math.log2(IMAGE_SIZE)) - 2
-BATCH_SIZE = 20
-NUM_ITERATIONS = 300000
-DEVICE = torch.device('cuda:1')
+BATCH_SIZE = 32
+NUM_ITERATIONS = 1000000
+DEVICE = torch.device('cuda:0')
 
 
 def train():
@@ -31,13 +31,13 @@ def train():
     loader = DataLoader(dataset, shuffle=True, batch_size=BATCH_SIZE, num_workers=8)
     data_loader = iter(loader)
 
-    generator = Generator(DEPTH, Z_DIMENSION).to(DEVICE)
-    discriminator = Discriminator(DEPTH, max_channels=256).to(DEVICE)
+    generator = Generator(DEPTH).to(DEVICE)
+    discriminator = Discriminator(DEPTH).to(DEVICE)
 
     g_optimizer = optim.Adam(generator.parameters(), lr=3e-3, betas=(0.0, 0.99))
     d_optimizer = optim.Adam(discriminator.parameters(), lr=3e-3, betas=(0.0, 0.99))
 
-    generator_ema = Generator(DEPTH, Z_DIMENSION).to(DEVICE)
+    generator_ema = Generator(DEPTH).to(DEVICE)
     accumulate(generator_ema, generator, 0.0)
 
     for i in progress_bar:
@@ -63,11 +63,13 @@ def train():
         b = images.shape[0]
         images = images.to(DEVICE)
 
-        downsampled = [
-            F.avg_pool2d(images, 2 ** i)
-            for i in reversed(range(1, DEPTH + 1))
-        ]
-        images = downsampled + [images]
+        downsampled = [images]
+        for i in range(DEPTH):
+            images = F.avg_pool2d(images, 2)
+            downsampled.append(images)
+
+        # from lowest to biggest resolution
+        images = downsampled[::-1]
 
         z = torch.randn(b, Z_DIMENSION, device=DEVICE)
         z = (Z_DIMENSION ** 0.5) * z / z.norm(p=2, dim=1, keepdim=True)

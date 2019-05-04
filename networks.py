@@ -105,13 +105,61 @@ class MinibatchStdDev(nn.Module):
         b, _, h, w = x.shape
 
         y = x - x.mean(dim=0, keepdim=True)
-        y = torch.sqrt(y.pow(2).mean(dim=0) + 1e-8)
+        y = torch.sqrt(y.pow(2).mean(dim=0))
         # it has shape [c, h, w]
 
         y = y.mean().view(1, 1, 1, 1)
         y = y.repeat(b, 1, h, w)
         x = torch.cat([x, y], dim=1)
         return x
+
+
+class AdaptiveInstanceNorm(nn.Module):
+
+    def __init__(self, in_channels, z_dimension):
+        super().__init__()
+
+        self.norm = nn.InstanceNorm2d(in_channels)
+        self.linear = Linear(z_dimension, 2 * in_channels)
+
+        self.linear.layer.bias.data[:in_channels] = 1.0
+        self.linear.layer.bias.data[in_channels:] = 0.0
+
+    def forward(self, x, z):
+        """
+        Arguments:
+            x: a float tensor with shape [b, in_channels, h, w].
+            w: a float tensor with shape [b, z_dimension].
+        Returns:
+            a float tensor with shape [b, in_channels, h, w].
+        """
+
+        s = self.linear(z).unsqueeze(2).unsqueeze(3)
+        gamma, beta = s.chunk(2, dim=1)
+        # they have shape [b, in_channels, 1, 1]
+
+        x = self.norm(x)
+        return gamma * x + beta
+
+
+class NoiseInjection(nn.Module):
+
+    def __init__(self, in_channels):
+        super().__init__()
+
+        scaler = torch.zeros(1, in_channels, 1, 1)
+        self.scaler = nn.Parameter(scaler)
+
+    def forward(self, x):
+        """
+        Arguments:
+            x: a float tensor with shape [b, in_channels, h, w].
+        Returns:
+            a float tensor with shape [b, in_channels, h, w].
+        """
+        b, _, h, w = x.shape
+        noise = torch.randn(b, 1, h, w, device=x.device)
+        return x + self.scaler * noise
 
 
 class InitialGeneratorBlock(nn.Module):
@@ -147,21 +195,40 @@ class InitialGeneratorBlock(nn.Module):
 
 class GeneratorBlock(nn.Module):
 
-    def __init__(self, in_channels, out_channels):
+    def __init__(self, in_channels, out_channels, z_dimension=512):
         super().__init__()
 
-        self.layers = nn.Sequential(
-            Conv2d(in_channels, out_channels, 3, padding=1),
-            nn.LeakyReLU(0.2),
-            PixelNorm(),
-            Conv2d(out_channels, out_channels, 3, padding=1),
-            nn.LeakyReLU(0.2),
-            PixelNorm()
-        )
+        self.conv1 = Conv2d(in_channels, out_channels, 3, padding=1)
+        self.noise1 = NoiseInjection(out_channels)
+        self.relu1 = nn.LeakyReLU(0.2)
+        self.adain1 = AdaptiveInstanceNorm(out_channels, z_dimension)
 
-    def forward(self, x):
+        self.conv2 = Conv2d(out_channels, out_channels, 3, padding=1)
+        self.noise2 = NoiseInjection(out_channels)
+        self.relu2 = nn.LeakyReLU(0.2)
+        self.adain2 = AdaptiveInstanceNorm(out_channels, z_dimension)
+
+    def forward(self, x, z):
+        """
+        Arguments:
+            x: a float tensor with shape [b, in_channels, h, w].
+            z: a float tensor with shape [b, z_dimension].
+        Returns:
+            a float tensor with shape [b, out_channels, 2 * h, 2 * w].
+        """
         x = F.interpolate(x, scale_factor=2, mode='bilinear', align_corners=False)
-        return self.layers(x)
+
+        x = self.conv1(x)
+        x = self.noise1(x)
+        x = self.relu1(x)
+        x = self.adain1(x, z)
+
+        x = self.conv2(x)
+        x = self.noise2(x)
+        x = self.relu2(x)
+        x = self.adain2(x, z)
+
+        return x
 
 
 class DiscriminatorBlock(nn.Module):
@@ -208,10 +275,12 @@ class FinalDiscriminatorBlock(nn.Module):
 
 class Generator(nn.Module):
 
-    def __init__(self, depth=6, z_dimension=512):
+    def __init__(self, depth=6):
         super().__init__()
 
         assert depth >= 5
+        z_dimension = 512
+
         progression = [InitialGeneratorBlock(z_dimension)]
         to_rgb = [Conv2d(z_dimension, 3, 1)]
 
@@ -239,6 +308,7 @@ class Generator(nn.Module):
 
         self.progression = nn.ModuleList(progression)
         self.to_rgb = nn.ModuleList(to_rgb)
+        self.depth = depth
 
     def forward(self, z):
         """
@@ -249,19 +319,21 @@ class Generator(nn.Module):
             has shape [b, 3, s, s] with s = 4 * (2 ** i).
             Integer `i` is in range [0, depth].
         """
-        outputs = []
 
-        x = z
-        for block, converter in zip(self.progression, self.to_rgb):
-            x = block(x)
-            outputs.append(converter(x))
+        x = self.progression[0](z)
+        outputs = [self.to_rgb[0](x)]
+
+        for i in range(self.depth):
+
+            x = self.progression[i + 1](x, z)
+            outputs.append(self.to_rgb[i + 1](x))
 
         return outputs
 
 
 class Discriminator(nn.Module):
 
-    def __init__(self, depth=6, max_channels=256):
+    def __init__(self, depth=6, max_channels=512):
         super().__init__()
 
         assert depth >= 5
@@ -273,24 +345,25 @@ class Discriminator(nn.Module):
             in_channels = min(2 ** (4 + i), max_channels)
             out_channels = min(2 ** (4 + i + 1), max_channels)
 
-            from_rgb.append(Conv2d(3, in_channels, 1))
-            progression.append(DiscriminatorBlock(2 * in_channels, out_channels))
+            from_rgb.append(Conv2d(3, 16, 1))
+            progression.append(DiscriminatorBlock(in_channels + 16, out_channels))
 
         """
-        If depth = 6 and max_channels = 256 then
+        If depth = 6 and max_channels = 512 then
         tuples (i, output shape of a block) are:
         1, [b, 64, 64, 64]
         2, [b, 128, 32, 32]
         3, [b, 256, 16, 16]
-        4, [b, 256, 8, 8]
-        5, [b, 256, 4, 4]
+        4, [b, 512, 8, 8]
+        5, [b, 512, 4, 4]
         """
 
-        self.final_from_rgb = Conv2d(3, out_channels, 1)
-        self.final_block = FinalDiscriminatorBlock(2 * out_channels)
+        self.final_from_rgb = Conv2d(3, 16, 1)
+        self.final_block = FinalDiscriminatorBlock(out_channels + 16)
 
         self.progression = nn.ModuleList(progression)
         self.from_rgb = nn.ModuleList(from_rgb)
+        self.depth = depth
 
     def forward(self, inputs):
         """
@@ -301,7 +374,7 @@ class Discriminator(nn.Module):
         Returns:
             a float tensor with shape [b].
         """
-        depth = len(self.progression)
+        depth = self.depth
 
         x = inputs[depth]
         x = self.from_rgb[0](x)
