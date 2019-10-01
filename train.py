@@ -2,6 +2,7 @@ import torch
 from torch import optim
 from torch.nn import functional as F
 from torch.utils.data import DataLoader, Dataset
+from torch.utils.tensorboard import SummaryWriter
 from torchvision import transforms
 
 import math
@@ -19,13 +20,15 @@ DEPTH = int(math.log2(IMAGE_SIZE)) - 2
 BATCH_SIZE = 32
 NUM_ITERATIONS = 1000000
 DEVICE = torch.device('cuda:0')
-IMAGES_PATH = '/home/dan/work/feidegger/patterns/images/'
+IMAGES_PATH = '/home/dan/datasets/four_styles/images/'
+LOGS_DIR = 'summaries/'
 
 
 def train():
 
     epoch = 1
     progress_bar = tqdm(range(NUM_ITERATIONS))
+    writer = SummaryWriter(LOGS_DIR)
 
     dataset = Images(folder=IMAGES_PATH)
     loader = DataLoader(dataset, shuffle=True, batch_size=BATCH_SIZE, num_workers=8)
@@ -52,7 +55,7 @@ def train():
             # save every fifth epoch
             if epoch % 5 == 0:
                 state = {'generator': generator.state_dict(), 'generator_ema': generator_ema.state_dict()}
-                torch.save(state, f'checkpoints/train_epoch-{epoch}.model')
+                torch.save(state, f'checkpoints/train_epoch_{epoch}.model')
 
             # start a new epoch
             data_loader = iter(loader)
@@ -90,7 +93,7 @@ def train():
         discriminator_loss.backward()
         d_optimizer.step()
 
-        requires_grad(discriminator, False)
+        discriminator.requires_grad_(False)
 
         real_scores = discriminator(images)
         fake_scores = discriminator(fake_images)
@@ -104,12 +107,16 @@ def train():
         generator_loss.backward()
         g_optimizer.step()
 
-        requires_grad(discriminator, True)
+        discriminator.requires_grad_(True)
         accumulate(generator_ema, generator)
 
         g = generator_loss.item()
         d = discriminator_loss.item()
-        description = f'epoch: {epoch}, generator: {g:.3f}, discriminator: {d:.6f}'
+
+        writer.add_scalar('losses/generator_loss', g, i)
+        writer.add_scalar('losses/discriminator_loss', d, i)
+
+        description = f'epoch: {epoch}'
         progress_bar.set_description(description)
 
 
@@ -120,11 +127,6 @@ def accumulate(model_accumulator, model, decay=0.999):
 
     for k in params.keys():
         ema_params[k].data.mul_(decay).add_(1.0 - decay, params[k].data)
-
-
-def requires_grad(model, flag):
-    for p in model.parameters():
-        p.requires_grad = flag
 
 
 class Images(Dataset):
@@ -139,7 +141,6 @@ class Images(Dataset):
         self.folder = folder
 
         self.transform = transforms.Compose([
-            # transforms.Resize(IMAGE_SIZE),
             transforms.RandomCrop(IMAGE_SIZE),
             transforms.RandomHorizontalFlip(),
             transforms.RandomVerticalFlip(),
