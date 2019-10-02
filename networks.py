@@ -29,8 +29,6 @@ class EqualLR:
             fan_in = shape[1] * shape[2] * shape[3]
         elif isinstance(module, nn.Linear):
             fan_in = shape[1]
-        elif isinstance(module, nn.ConvTranspose2d):
-            fan_in = shape[0]
 
         scaler = math.sqrt(2.0 / fan_in)
         hook = EqualLR(name, scaler)
@@ -164,15 +162,14 @@ class NoiseInjection(nn.Module):
 
 class InitialGeneratorBlock(nn.Module):
 
-    def __init__(self, num_channels):
+    def __init__(self, num_channels, initial_size):
         super().__init__()
 
-        transposed = nn.ConvTranspose2d(num_channels, num_channels, 4)
-        init.normal_(transposed.weight)
-        init.zeros_(transposed.bias)
+        h, w = initial_size
+        self.linear = Linear(num_channels, num_channels * h * w)
+        self.initial_size = initial_size
 
         self.layers = nn.Sequential(
-            equal_lr(transposed),
             nn.LeakyReLU(0.2),
             Conv2d(num_channels, num_channels, 3, padding=1),
             nn.LeakyReLU(0.2),
@@ -184,13 +181,16 @@ class InitialGeneratorBlock(nn.Module):
         Arguments:
             z: a float tensor with shape [b, num_channels].
         Returns:
-            a float tensor with shape [b, num_channels, 4, 4].
+            a float tensor with shape [b, num_channels, h, w].
         """
 
-        x = z.unsqueeze(2).unsqueeze(3)
-        # it has shape [b, num_channels, 1, 1]
+        b, num_channels = z.size()
+        h, w = self.initial_size
 
-        return self.layers(x)
+        x = self.linear(z).view(b, num_channels, h, w)
+        x = self.layers(x)
+
+        return x
 
 
 class GeneratorBlock(nn.Module):
@@ -250,14 +250,17 @@ class DiscriminatorBlock(nn.Module):
 
 class FinalDiscriminatorBlock(nn.Module):
 
-    def __init__(self, in_channels):
+    def __init__(self, in_channels, initial_size):
         super().__init__()
+
+        h, w = initial_size
+        # h and w are small
 
         self.layers = nn.Sequential(
             MinibatchStdDev(),
             Conv2d(in_channels + 1, in_channels, 3, padding=1),
             nn.LeakyReLU(0.2),
-            Conv2d(in_channels, in_channels, 4),
+            Conv2d(in_channels, in_channels, kernel_size=(h, w)),
             nn.LeakyReLU(0.2),
             Conv2d(in_channels, 1, 1)
         )
@@ -265,23 +268,28 @@ class FinalDiscriminatorBlock(nn.Module):
     def forward(self, x):
         """
         Arguments:
-            x: a float tensor with shape [b, in_channels, 4, 4].
+            x: a float tensor with shape [b, in_channels, h, w].
         Returns:
             a float tensor with shape [b].
         """
-        b = x.shape[0]
+        b = x.size(0)
         return self.layers(x).view(b)
 
 
 class Generator(nn.Module):
 
-    def __init__(self, depth=6):
+    def __init__(self, initial_size, depth):
+        """
+        Arguments:
+            initial_size: a tuple of integers (h, w).
+            depth: an integer.
+        """
         super().__init__()
 
         assert depth >= 5
         z_dimension = 512
 
-        progression = [InitialGeneratorBlock(z_dimension)]
+        progression = [InitialGeneratorBlock(z_dimension, initial_size)]
         to_rgb = [Conv2d(z_dimension, 3, 1)]
 
         for i in range(depth):
@@ -298,12 +306,12 @@ class Generator(nn.Module):
         """
         If depth = 6 then tuples
         (i, output shape of a block) are:
-        0, [b, 512, 8, 8]
-        1, [b, 256, 16, 16]
-        2, [b, 128, 32, 32]
-        3, [b, 64, 64, 64]
-        4, [b, 32, 128, 128]
-        5, [b, 16, 256, 256]
+        0, [b, 512, 2 * h, 2 * w]
+        1, [b, 256, 4 * h, 4 * w]
+        2, [b, 128, 8 * h, 8 * w]
+        3, [b, 64, 16 * h, 16 * w]
+        4, [b, 32, 32 * h, 32 * w]
+        5, [b, 16, 64 * h, 64 * w]
         """
 
         self.progression = nn.ModuleList(progression)
@@ -316,7 +324,7 @@ class Generator(nn.Module):
             z: a float tensor with shape [b, z_dimension].
         Returns:
             a list with float tensors. Where `i`-th tensor
-            has shape [b, 3, s, s] with s = 4 * (2 ** i).
+            has shape [b, 3, s * h, s * w] with s = 2 ** i.
             Integer `i` is in range [0, depth].
         """
 
@@ -333,7 +341,13 @@ class Generator(nn.Module):
 
 class Discriminator(nn.Module):
 
-    def __init__(self, depth=6, max_channels=512):
+    def __init__(self, initial_size, depth=6, max_channels=512):
+        """
+        Arguments:
+            initial_size: a tuple of integers (h, w).
+            depth: a integer.
+            max_channels: an integer.
+        """
         super().__init__()
 
         assert depth >= 5
@@ -351,15 +365,15 @@ class Discriminator(nn.Module):
         """
         If depth = 6 and max_channels = 512 then
         tuples (i, output shape of a block) are:
-        1, [b, 64, 64, 64]
-        2, [b, 128, 32, 32]
-        3, [b, 256, 16, 16]
-        4, [b, 512, 8, 8]
-        5, [b, 512, 4, 4]
+        1, [b, 64, 16 * h, 16 * w]
+        2, [b, 128, 8 * h, 8 * w]
+        3, [b, 256, 4 * h, 4 * w]
+        4, [b, 512, 2 * h, 2 * w]
+        5, [b, 512, h, w]
         """
 
         self.final_from_rgb = Conv2d(3, 16, 1)
-        self.final_block = FinalDiscriminatorBlock(out_channels + 16)
+        self.final_block = FinalDiscriminatorBlock(out_channels + 16, initial_size)
 
         self.progression = nn.ModuleList(progression)
         self.from_rgb = nn.ModuleList(from_rgb)
@@ -369,8 +383,9 @@ class Discriminator(nn.Module):
         """
         Arguments:
             inputs: a list with float tensors. Where `i`-th tensor
-            has shape [b, 3, s, s] with s = 4 * (2 ** i).
+            has shape [b, 3, s * h, s * h] with s = 2 ** i.
             Integer `i` is in range [0, depth].
+            (h, w) is the initial size.
         Returns:
             a float tensor with shape [b].
         """
@@ -378,24 +393,24 @@ class Discriminator(nn.Module):
 
         x = inputs[depth]
         x = self.from_rgb[0](x)
-        # it has shape [b, 16, s, s],
-        # where s = 4 * (2 ** depth)
+        # it has shape [b, 16, s * h, s * w],
+        # where s = 2 ** depth
 
         x = self.progression[0](x)
-        # it has shape [b, 32, s / 2, s / 2]
+        # it has shape [b, 32, s * h / 2, s * w / 2]
 
         for i in range(1, depth):
 
             f = self.from_rgb[i](inputs[depth - i])
             x = torch.cat([x, f], dim=1)
 
-            # x has spatial size s x s,
-            # where s = 4 * 2 ** (depth - i).
+            # x has spatial size (s * h, s * w),
+            # where s = 2 ** (depth - i)
 
             x = self.progression[i](x)
 
         f = self.final_from_rgb(inputs[0])
         x = torch.cat([x, f], dim=1)
-        # it has spatial size 4 x 4
+        # it has spatial size (h, w)
 
         return self.final_block(x)

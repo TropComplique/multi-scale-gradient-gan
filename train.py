@@ -14,14 +14,17 @@ from networks import Generator, Discriminator
 from torch.backends import cudnn
 cudnn.benchmark = True
 
+WIDTH, HEIGHT = 256, 384
+DEPTH = 6  # number of upsamplings
+assert WIDTH % (2**DEPTH) == 0 and HEIGHT % (2**DEPTH) == 0
+INITIAL_SIZE = (HEIGHT // (2**DEPTH), WIDTH // (2**DEPTH))
 
-IMAGE_SIZE = 256  # it must be a power of two
-DEPTH = int(math.log2(IMAGE_SIZE)) - 2
 BATCH_SIZE = 32
 NUM_ITERATIONS = 1000000
 DEVICE = torch.device('cuda:0')
-IMAGES_PATH = '/home/dan/datasets/four_styles/images/'
+IMAGES_PATH = '/home/dan/datasets/feidegger/images/'
 LOGS_DIR = 'summaries/'
+MODELS_DIR = 'checkpoints/'
 
 
 def train():
@@ -30,12 +33,12 @@ def train():
     progress_bar = tqdm(range(NUM_ITERATIONS))
     writer = SummaryWriter(LOGS_DIR)
 
-    dataset = Images(folder=IMAGES_PATH)
-    loader = DataLoader(dataset, shuffle=True, batch_size=BATCH_SIZE, num_workers=8)
+    dataset = Images(folder=IMAGES_PATH, size=(HEIGHT, WIDTH))
+    loader = DataLoader(dataset, shuffle=True, batch_size=BATCH_SIZE, num_workers=8, drop_last=True)
     data_loader = iter(loader)
 
-    generator = Generator(DEPTH).to(DEVICE)
-    discriminator = Discriminator(DEPTH).to(DEVICE)
+    generator = Generator(INITIAL_SIZE, DEPTH).to(DEVICE)
+    discriminator = Discriminator(INITIAL_SIZE, DEPTH).to(DEVICE)
 
     g_optimizer = optim.Adam(generator.parameters(), lr=3e-3, betas=(0.0, 0.99))
     d_optimizer = optim.Adam(discriminator.parameters(), lr=3e-3, betas=(0.0, 0.99))
@@ -55,7 +58,8 @@ def train():
             # save every fifth epoch
             if epoch % 5 == 0:
                 state = {'generator': generator.state_dict(), 'generator_ema': generator_ema.state_dict()}
-                torch.save(state, f'checkpoints/train_epoch_{epoch}.model')
+                save_path = os.path.join(MODELS_DIR, f'train_epoch_{epoch}.model')
+                torch.save(state, save_path)
 
             # start a new epoch
             data_loader = iter(loader)
@@ -66,7 +70,7 @@ def train():
         images = images.to(DEVICE)
 
         downsampled = [images]
-        for i in range(DEPTH):
+        for _ in range(DEPTH):
             images = F.avg_pool2d(images, 2)
             downsampled.append(images)
 
@@ -75,8 +79,7 @@ def train():
 
         z_dimension = 512
         z = torch.randn(b, z_dimension, device=DEVICE)
-        z = (z_dimension ** 0.5) * z / z.norm(p=2, dim=1, keepdim=True)
-        # now `sum(z**2, axis=1)` is equal to `z_dimension`
+        z = z / z.norm(p=2, dim=1, keepdim=True)
 
         fake_images = generator(z)
         fake_images_detached = [x.detach() for x in fake_images]
@@ -120,7 +123,7 @@ def train():
         progress_bar.set_description(description)
 
 
-def accumulate(model_accumulator, model, decay=0.999):
+def accumulate(model_accumulator, model, decay=0.995):
 
     params = dict(model.named_parameters())
     ema_params = dict(model_accumulator.named_parameters())
@@ -131,19 +134,19 @@ def accumulate(model_accumulator, model, decay=0.999):
 
 class Images(Dataset):
 
-    def __init__(self, folder):
+    def __init__(self, folder, size):
         """
         Arguments:
             folder: a string, the path to a folder with images.
+            size: a tuple of integers (h, w).
         """
 
         self.names = os.listdir(folder)
         self.folder = folder
 
         self.transform = transforms.Compose([
-            transforms.RandomCrop(IMAGE_SIZE),
+            transforms.Resize(size),
             transforms.RandomHorizontalFlip(),
-            transforms.RandomVerticalFlip(),
             transforms.ToTensor()
         ])
 
