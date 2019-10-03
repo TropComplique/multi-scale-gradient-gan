@@ -7,6 +7,7 @@ from torchvision import transforms
 
 import math
 import os
+import copy
 from PIL import Image
 from tqdm import tqdm
 from networks import Generator, Discriminator
@@ -19,8 +20,8 @@ DEPTH = 6  # number of upsamplings
 assert WIDTH % (2**DEPTH) == 0 and HEIGHT % (2**DEPTH) == 0
 INITIAL_SIZE = (HEIGHT // (2**DEPTH), WIDTH // (2**DEPTH))
 
-BATCH_SIZE = 32
-NUM_ITERATIONS = 1000000
+BATCH_SIZE = 24
+NUM_ITERATIONS = 91500 # 8792, 366 per, 250 epoch
 DEVICE = torch.device('cuda:0')
 IMAGES_PATH = '/home/dan/datasets/feidegger/images/'
 LOGS_DIR = 'summaries/'
@@ -43,8 +44,8 @@ def train():
     g_optimizer = optim.Adam(generator.parameters(), lr=3e-3, betas=(0.0, 0.99))
     d_optimizer = optim.Adam(discriminator.parameters(), lr=3e-3, betas=(0.0, 0.99))
 
-    generator_ema = Generator(DEPTH).to(DEVICE)
-    accumulate(generator_ema, generator, 0.0)
+    generator_ema = copy.deepcopy(generator)
+    #accumulate(generator_ema, generator, 0.0)
 
     for i in progress_bar:
 
@@ -56,7 +57,7 @@ def train():
         except (OSError, StopIteration):
 
             # save every fifth epoch
-            if epoch % 5 == 0:
+            if epoch % 25 == 0:
                 state = {'generator': generator.state_dict(), 'generator_ema': generator_ema.state_dict()}
                 save_path = os.path.join(MODELS_DIR, f'train_epoch_{epoch}.model')
                 torch.save(state, save_path)
@@ -123,7 +124,7 @@ def train():
         progress_bar.set_description(description)
 
 
-def accumulate(model_accumulator, model, decay=0.995):
+def accumulate(model_accumulator, model, decay=0.993):
 
     params = dict(model.named_parameters())
     ema_params = dict(model_accumulator.named_parameters())
