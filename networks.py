@@ -265,6 +265,7 @@ class Generator(nn.Module):
             x = self.progression[i + 1](x, z)
             outputs.append(self.to_rgb[i + 1](x))
 
+        outputs = [F.tanh(x) for x in outputs]
         return outputs
 
 
@@ -348,6 +349,7 @@ class Discriminator(nn.Module):
         """
         super().__init__()
 
+        assert upsample >= 5
         from_rgb = [Conv2d(3, depth, 1)]
         progression = [DiscriminatorBlock(depth, 2 * depth)]
 

@@ -11,7 +11,8 @@ import os
 import copy
 from PIL import Image
 from tqdm import tqdm
-from networks import Generator, Discriminator, FinalDiscriminatorBlock
+from networks import Generator, Discriminator
+from networks import FinalDiscriminatorBlock
 
 from torch.backends import cudnn
 cudnn.benchmark = True
@@ -20,12 +21,13 @@ WIDTH, HEIGHT = 256, 384
 UPSAMPLE = 6  # number of upsamplings
 
 BATCH_SIZE = 64
-NUM_ITERATIONS = 92000
-DEVICE = torch.device('cuda:0')
-IMAGES_PATH = '/home/dan/datasets/feidegger/images/'
+DEVICES = [torch.device('cuda:0'), torch.device('cuda:1')]
+NUM_ITERATIONS = 28000  # 137 iterations in one epoch
+IMAGES_PATH = '/home/dan/datasets/feidegger/images/'  # it contains 8792 images
 LOGS_DIR = 'summaries/'
 MODELS_DIR = 'checkpoints/'
-PLOT_IMAGE_STEP = 200
+PLOT_IMAGE_STEP = 300
+SAVE_EPOCH = 25
 
 
 def train():
@@ -43,12 +45,10 @@ def train():
     assert WIDTH % s == 0 and HEIGHT % s == 0
     initial_size = (HEIGHT // s, WIDTH // s)
 
-    DEVICES = [torch.device('cuda:0'), torch.device('cuda:1')]
-
     generator = Generator(initial_size, z_dimension, upsample=UPSAMPLE).to(DEVICES[0])
     discriminator = Discriminator(initial_size, upsample=UPSAMPLE).to(DEVICES[0])
 
-    # this block is separated because it contains MinibatchStdDev
+    # this block is separated because it contains MinibatchStdDev (it doesn't parallelize)
     final_block = FinalDiscriminatorBlock(16 + 512, initial_size).to(DEVICES[0])
 
     generator = nn.DataParallel(generator, device_ids=DEVICES)
@@ -61,7 +61,7 @@ def train():
 
     noise_vectors = []
     for _ in range(10):
-        z = torch.randn(1, z_dimension, device=DEVICE)
+        z = torch.randn(1, z_dimension, device=DEVICES[0])
         z = z / z.norm(p=2, dim=1, keepdim=True)
         noise_vectors.append(z)
 
@@ -74,8 +74,7 @@ def train():
 
         except (OSError, StopIteration):
 
-            # save every fifth epoch
-            if epoch % 25 == 0:
+            if epoch % SAVE_EPOCH == 0:
                 state = {'generator': generator.state_dict(), 'generator_ema': generator_ema.state_dict()}
                 save_path = os.path.join(MODELS_DIR, f'train_epoch_{epoch}.model')
                 torch.save(state, save_path)
@@ -86,7 +85,7 @@ def train():
             epoch += 1
 
         b = images.shape[0]
-        images = images.to(DEVICE)
+        images = images.to(DEVICES[0])
 
         downsampled = [images]
         for _ in range(UPSAMPLE):
@@ -96,7 +95,7 @@ def train():
         # from lowest to biggest resolution
         images = downsampled[::-1]
 
-        z = torch.randn(b, z_dimension, device=DEVICE)
+        z = torch.randn(b, z_dimension, device=DEVICES[0])
         z = z / z.norm(p=2, dim=1, keepdim=True)
 
         fake_images = generator(z)
@@ -151,7 +150,7 @@ def train():
         progress_bar.set_description(description)
 
 
-def accumulate(model_accumulator, model, decay=0.993):
+def accumulate(model_accumulator, model, decay=0.99):
 
     params = dict(model.named_parameters())
     ema_params = dict(model_accumulator.named_parameters())
