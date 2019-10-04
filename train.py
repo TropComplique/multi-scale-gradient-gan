@@ -1,5 +1,6 @@
 import torch
 from torch import optim
+from torch import nn
 from torch.nn import functional as F
 from torch.utils.data import DataLoader, Dataset
 from torch.utils.tensorboard import SummaryWriter
@@ -18,7 +19,7 @@ cudnn.benchmark = True
 WIDTH, HEIGHT = 256, 384
 UPSAMPLE = 6  # number of upsamplings
 
-BATCH_SIZE = 24
+BATCH_SIZE = 64
 NUM_ITERATIONS = 92000
 DEVICE = torch.device('cuda:0')
 IMAGES_PATH = '/home/dan/datasets/feidegger/images/'

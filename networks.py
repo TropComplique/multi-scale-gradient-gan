@@ -80,7 +80,7 @@ class AdaptiveInstanceNorm(nn.Module):
         self.norm = nn.InstanceNorm2d(in_channels)
         self.layers = nn.Sequential(
             Linear(z_dimension, 2 * in_channels),
-            nn.ReLU(inplace=True)
+            nn.ReLU(inplace=True),
             Linear(2 * in_channels, 2 * in_channels)
         )
 
