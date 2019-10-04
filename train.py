@@ -16,12 +16,12 @@ from torch.backends import cudnn
 cudnn.benchmark = True
 
 WIDTH, HEIGHT = 256, 384
-DEPTH = 6  # number of upsamplings
-assert WIDTH % (2**DEPTH) == 0 and HEIGHT % (2**DEPTH) == 0
-INITIAL_SIZE = (HEIGHT // (2**DEPTH), WIDTH // (2**DEPTH))
+UPSAMPLE = 6  # number of upsamplings
+assert WIDTH % (2**UPSAMPLE) == 0 and HEIGHT % (2**UPSAMPLE) == 0
+INITIAL_SIZE = (HEIGHT // (2**UPSAMPLE), WIDTH // (2**UPSAMPLE))
 
 BATCH_SIZE = 24
-NUM_ITERATIONS = 91500 # 8792, 366 per, 250 epoch
+NUM_ITERATIONS = 91500
 DEVICE = torch.device('cuda:0')
 IMAGES_PATH = '/home/dan/datasets/feidegger/images/'
 LOGS_DIR = 'summaries/'
@@ -38,14 +38,13 @@ def train():
     loader = DataLoader(dataset, shuffle=True, batch_size=BATCH_SIZE, num_workers=8, drop_last=True)
     data_loader = iter(loader)
 
-    generator = Generator(INITIAL_SIZE, DEPTH).to(DEVICE)
-    discriminator = Discriminator(INITIAL_SIZE, DEPTH).to(DEVICE)
+    generator = Generator(INITIAL_SIZE, upsample=UPSAMPLE).to(DEVICE)
+    discriminator = Discriminator(INITIAL_SIZE, upsample=UPSAMPLE).to(DEVICE)
 
     g_optimizer = optim.Adam(generator.parameters(), lr=3e-3, betas=(0.0, 0.99))
     d_optimizer = optim.Adam(discriminator.parameters(), lr=3e-3, betas=(0.0, 0.99))
 
     generator_ema = copy.deepcopy(generator)
-    #accumulate(generator_ema, generator, 0.0)
 
     for i in progress_bar:
 
@@ -71,14 +70,14 @@ def train():
         images = images.to(DEVICE)
 
         downsampled = [images]
-        for _ in range(DEPTH):
+        for _ in range(UPSAMPLE):
             images = F.avg_pool2d(images, 2)
             downsampled.append(images)
 
         # from lowest to biggest resolution
         images = downsampled[::-1]
 
-        z_dimension = 512
+        z_dimension = 128
         z = torch.randn(b, z_dimension, device=DEVICE)
         z = z / z.norm(p=2, dim=1, keepdim=True)
 
