@@ -10,15 +10,13 @@ import os
 import copy
 from PIL import Image
 from tqdm import tqdm
-from networks import Generator, Discriminator
+from networks import Generator, Discriminator, FinalDiscriminatorBlock
 
 from torch.backends import cudnn
 cudnn.benchmark = True
 
 WIDTH, HEIGHT = 256, 384
 UPSAMPLE = 6  # number of upsamplings
-assert WIDTH % (2**UPSAMPLE) == 0 and HEIGHT % (2**UPSAMPLE) == 0
-INITIAL_SIZE = (HEIGHT // (2**UPSAMPLE), WIDTH // (2**UPSAMPLE))
 
 BATCH_SIZE = 24
 NUM_ITERATIONS = 92000
@@ -39,21 +37,33 @@ def train():
     loader = DataLoader(dataset, shuffle=True, batch_size=BATCH_SIZE, num_workers=8, drop_last=True)
     data_loader = iter(loader)
 
-    generator = Generator(INITIAL_SIZE, upsample=UPSAMPLE).to(DEVICE)
-    discriminator = Discriminator(INITIAL_SIZE, upsample=UPSAMPLE).to(DEVICE)
+    z_dimension = 128
+    s = 2 ** UPSAMPLE
+    assert WIDTH % s == 0 and HEIGHT % s == 0
+    initial_size = (HEIGHT // s, WIDTH // s)
+
+    DEVICES = [torch.device('cuda:0'), torch.device('cuda:1')]
+
+    generator = Generator(initial_size, z_dimension, upsample=UPSAMPLE).to(DEVICES[0])
+    discriminator = Discriminator(initial_size, upsample=UPSAMPLE).to(DEVICES[0])
+
+    # this block is separated because it contains MinibatchStdDev
+    final_block = FinalDiscriminatorBlock(16 + 512, initial_size).to(DEVICES[0])
+
+    generator = nn.DataParallel(generator, device_ids=DEVICES)
+    discriminator = nn.DataParallel(discriminator, device_ids=DEVICES)
 
     g_optimizer = optim.Adam(generator.parameters(), lr=3e-3, betas=(0.0, 0.99))
     d_optimizer = optim.Adam(discriminator.parameters(), lr=3e-3, betas=(0.0, 0.99))
 
     generator_ema = copy.deepcopy(generator)
-    
+
     noise_vectors = []
     for _ in range(10):
-        z_dimension = 128
         z = torch.randn(1, z_dimension, device=DEVICE)
         z = z / z.norm(p=2, dim=1, keepdim=True)
         noise_vectors.append(z)
-            
+
     for i in progress_bar:
 
         try:
@@ -85,7 +95,6 @@ def train():
         # from lowest to biggest resolution
         images = downsampled[::-1]
 
-        z_dimension = 128
         z = torch.randn(b, z_dimension, device=DEVICE)
         z = z / z.norm(p=2, dim=1, keepdim=True)
 
@@ -132,7 +141,7 @@ def train():
             for j, z in enumerate(noise_vectors):
                 with torch.no_grad():
                     xs = generator(z)
-                    for k, x in enumerate(xs): 
+                    for k, x in enumerate(xs):
                         x = 0.5 * (x + 1.0)
                         x = x.clamp(0.0, 1.0).cpu()
                         writer.add_image(f'sample_{j}/scale_{k}', x[0], i)

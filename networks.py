@@ -78,10 +78,11 @@ class AdaptiveInstanceNorm(nn.Module):
         super().__init__()
 
         self.norm = nn.InstanceNorm2d(in_channels)
-        self.linear = Linear(z_dimension, 2 * in_channels)
-
-        self.linear.layer.bias.data[:in_channels] = 0.0
-        self.linear.layer.bias.data[in_channels:] = 0.0
+        self.layers = nn.Sequential(
+            Linear(z_dimension, 2 * in_channels),
+            nn.ReLU(inplace=True)
+            Linear(2 * in_channels, 2 * in_channels)
+        )
 
     def forward(self, x, z):
         """
@@ -92,8 +93,8 @@ class AdaptiveInstanceNorm(nn.Module):
             a float tensor with shape [b, in_channels, h, w].
         """
 
-        s = self.linear(z).unsqueeze(2).unsqueeze(3)
-        gamma, beta = s.chunk(2, dim=1)
+        w = self.layers(z).unsqueeze(2).unsqueeze(3)
+        gamma, beta = w.chunk(2, dim=1)
         # they have shape [b, in_channels, 1, 1]
 
         x = self.norm(x)
@@ -132,12 +133,12 @@ class InitialGeneratorBlock(nn.Module):
         self.constant = nn.Parameter(constant)
 
         self.noise1 = NoiseInjection(out_channels)
-        self.relu1 = nn.LeakyReLU(0.2)
+        self.relu1 = nn.LeakyReLU(0.2, inplace=True)
         self.adain1 = AdaptiveInstanceNorm(out_channels, z_dimension)
 
         self.conv2 = Conv2d(out_channels, out_channels, 3, padding=1)
         self.noise2 = NoiseInjection(out_channels)
-        self.relu2 = nn.LeakyReLU(0.2)
+        self.relu2 = nn.LeakyReLU(0.2, inplace=True)
         self.adain2 = AdaptiveInstanceNorm(out_channels, z_dimension)
 
     def forward(self, z):
@@ -169,12 +170,12 @@ class GeneratorBlock(nn.Module):
 
         self.conv1 = Conv2d(in_channels, out_channels, 3, padding=1)
         self.noise1 = NoiseInjection(out_channels)
-        self.relu1 = nn.LeakyReLU(0.2)
+        self.relu1 = nn.LeakyReLU(0.2, inplace=True)
         self.adain1 = AdaptiveInstanceNorm(out_channels, z_dimension)
 
         self.conv2 = Conv2d(out_channels, out_channels, 3, padding=1)
         self.noise2 = NoiseInjection(out_channels)
-        self.relu2 = nn.LeakyReLU(0.2)
+        self.relu2 = nn.LeakyReLU(0.2, inplace=True)
         self.adain2 = AdaptiveInstanceNorm(out_channels, z_dimension)
 
     def forward(self, x, z):
@@ -274,9 +275,9 @@ class DiscriminatorBlock(nn.Module):
 
         self.layers = nn.Sequential(
             Conv2d(in_channels, out_channels, 3, padding=1),
-            nn.LeakyReLU(0.2),
+            nn.LeakyReLU(0.2, inplace=True),
             Conv2d(out_channels, out_channels, 3, padding=1),
-            nn.LeakyReLU(0.2),
+            nn.LeakyReLU(0.2, inplace=True),
             nn.AvgPool2d(2)
         )
 
@@ -319,9 +320,9 @@ class FinalDiscriminatorBlock(nn.Module):
         self.layers = nn.Sequential(
             MinibatchStdDev(),
             Conv2d(in_channels + 1, in_channels, 3, padding=1),
-            nn.LeakyReLU(0.2),
+            nn.LeakyReLU(0.2, inplace=True),
             Conv2d(in_channels, in_channels, kernel_size=(h, w)),
-            nn.LeakyReLU(0.2),
+            nn.LeakyReLU(0.2, inplace=True),
             Conv2d(in_channels, 1, 1)
         )
 
@@ -370,8 +371,6 @@ class Discriminator(nn.Module):
         """
 
         self.final_from_rgb = Conv2d(3, depth, 1)
-        self.final_block = FinalDiscriminatorBlock(out_channels + depth, initial_size)
-
         self.progression = nn.ModuleList(progression)
         self.from_rgb = nn.ModuleList(from_rgb)
         self.upsample = upsample
@@ -383,7 +382,7 @@ class Discriminator(nn.Module):
             has shape [b, 3, s * h, s * h] with s = 2 ** i.
             Integer `i` is in range [0, upsample].
         Returns:
-            a float tensor with shape [b].
+            a float tensor with shape [b, 16 + 512, h, w].
         """
         upsample = self.upsample
 
@@ -409,4 +408,4 @@ class Discriminator(nn.Module):
         x = torch.cat([x, f], dim=1)
         # it has spatial size (h, w)
 
-        return self.final_block(x)
+        return x
