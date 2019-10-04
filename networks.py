@@ -80,7 +80,7 @@ class AdaptiveInstanceNorm(nn.Module):
         self.norm = nn.InstanceNorm2d(in_channels)
         self.linear = Linear(z_dimension, 2 * in_channels)
 
-        self.linear.layer.bias.data[:in_channels] = 1.0
+        self.linear.layer.bias.data[:in_channels] = 0.0
         self.linear.layer.bias.data[in_channels:] = 0.0
 
     def forward(self, x, z):

@@ -21,11 +21,12 @@ assert WIDTH % (2**UPSAMPLE) == 0 and HEIGHT % (2**UPSAMPLE) == 0
 INITIAL_SIZE = (HEIGHT // (2**UPSAMPLE), WIDTH // (2**UPSAMPLE))
 
 BATCH_SIZE = 24
-NUM_ITERATIONS = 91500
+NUM_ITERATIONS = 92000
 DEVICE = torch.device('cuda:0')
 IMAGES_PATH = '/home/dan/datasets/feidegger/images/'
 LOGS_DIR = 'summaries/'
 MODELS_DIR = 'checkpoints/'
+PLOT_IMAGE_STEP = 200
 
 
 def train():
@@ -45,7 +46,14 @@ def train():
     d_optimizer = optim.Adam(discriminator.parameters(), lr=3e-3, betas=(0.0, 0.99))
 
     generator_ema = copy.deepcopy(generator)
-
+    
+    noise_vectors = []
+    for _ in range(10):
+        z_dimension = 128
+        z = torch.randn(1, z_dimension, device=DEVICE)
+        z = z / z.norm(p=2, dim=1, keepdim=True)
+        noise_vectors.append(z)
+            
     for i in progress_bar:
 
         try:
@@ -118,6 +126,16 @@ def train():
 
         writer.add_scalar('losses/generator_loss', g, i)
         writer.add_scalar('losses/discriminator_loss', d, i)
+
+        if i % PLOT_IMAGE_STEP == 0:
+
+            for j, z in enumerate(noise_vectors):
+                with torch.no_grad():
+                    xs = generator(z)
+                    for k, x in enumerate(xs): 
+                        x = 0.5 * (x + 1.0)
+                        x = x.clamp(0.0, 1.0).cpu()
+                        writer.add_image(f'sample_{j}/scale_{k}', x[0], i)
 
         description = f'epoch: {epoch}'
         progress_bar.set_description(description)
