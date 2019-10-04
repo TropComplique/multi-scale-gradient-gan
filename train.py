@@ -22,7 +22,7 @@ UPSAMPLE = 6  # number of upsamplings
 
 BATCH_SIZE = 64
 DEVICES = [torch.device('cuda:0'), torch.device('cuda:1')]
-NUM_ITERATIONS = 28000  # 137 iterations in one epoch
+NUM_ITERATIONS = 56000  # 137 iterations in one epoch
 IMAGES_PATH = '/home/dan/datasets/feidegger/images/'  # it contains 8792 images
 LOGS_DIR = 'summaries/'
 MODELS_DIR = 'checkpoints/'
@@ -54,8 +54,8 @@ def train():
     generator = nn.DataParallel(generator, device_ids=DEVICES)
     discriminator = nn.DataParallel(discriminator, device_ids=DEVICES)
 
-    g_optimizer = optim.Adam(generator.parameters(), lr=3e-3, betas=(0.0, 0.99))
-    d_optimizer = optim.Adam(discriminator.parameters(), lr=3e-3, betas=(0.0, 0.99))
+    g_optimizer = optim.Adam(generator.parameters(), lr=4e-3, betas=(0.0, 0.99))
+    d_optimizer = optim.Adam(discriminator.parameters(), lr=4e-3, betas=(0.0, 0.99))
 
     generator_ema = copy.deepcopy(generator)
 
@@ -69,8 +69,7 @@ def train():
 
         try:
             images = next(data_loader)
-            # it has shape [b, 3, h, w],
-            # where h = w = IMAGE_SIZE
+            # it has shape [b, 3, h, w]
 
         except (OSError, StopIteration):
 
@@ -140,11 +139,11 @@ def train():
 
             for j, z in enumerate(noise_vectors):
                 with torch.no_grad():
-                    xs = generator(z)
-                    for k, x in enumerate(xs):
+                    images = generator(z)
+                    for k, x in enumerate(images):
                         x = 0.5 * (x + 1.0)
-                        x = x.clamp(0.0, 1.0).cpu()
-                        writer.add_image(f'sample_{j}/scale_{k}', x[0], i)
+                        x = x[0].cpu()
+                        writer.add_image(f'sample_{j}/scale_{k}', x, i)
 
         description = f'epoch: {epoch}'
         progress_bar.set_description(description)

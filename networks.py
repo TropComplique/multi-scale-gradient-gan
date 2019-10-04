@@ -78,11 +78,7 @@ class AdaptiveInstanceNorm(nn.Module):
         super().__init__()
 
         self.norm = nn.InstanceNorm2d(in_channels)
-        self.layers = nn.Sequential(
-            Linear(z_dimension, 2 * in_channels),
-            nn.ReLU(inplace=True),
-            Linear(2 * in_channels, 2 * in_channels)
-        )
+        self.linear = Linear(z_dimension, 2 * in_channels)
 
     def forward(self, x, z):
         """
@@ -93,7 +89,7 @@ class AdaptiveInstanceNorm(nn.Module):
             a float tensor with shape [b, in_channels, h, w].
         """
 
-        w = self.layers(z).unsqueeze(2).unsqueeze(3)
+        w = self.linear(z).unsqueeze(2).unsqueeze(3)
         gamma, beta = w.chunk(2, dim=1)
         # they have shape [b, in_channels, 1, 1]
 
@@ -215,7 +211,7 @@ class Generator(nn.Module):
 
         out_channels = min(depth * (2 ** upsample), 512)
         progression = [InitialGeneratorBlock(initial_size, out_channels, z_dimension)]
-        to_rgb = [Conv2d(out_channels, 3, 1)]
+        to_rgb = [Conv2d(out_channels, 3, 3, padding=1)]
 
         for i in range(upsample):
 
@@ -224,7 +220,7 @@ class Generator(nn.Module):
             out_channels = min(depth * m, 512)
 
             block = GeneratorBlock(in_channels, out_channels, z_dimension)
-            converter = Conv2d(out_channels, 3, 1)
+            converter = Conv2d(out_channels, 3, 3, padding=1)
 
             progression.append(block)
             to_rgb.append(converter)
@@ -265,7 +261,7 @@ class Generator(nn.Module):
             x = self.progression[i + 1](x, z)
             outputs.append(self.to_rgb[i + 1](x))
 
-        outputs = [F.tanh(x) for x in outputs]
+        outputs = [torch.tanh(x) for x in outputs]
         return outputs
 
 
@@ -350,7 +346,7 @@ class Discriminator(nn.Module):
         super().__init__()
 
         assert upsample >= 5
-        from_rgb = [Conv2d(3, depth, 1)]
+        from_rgb = [Conv2d(3, depth, 3, padding=1)]
         progression = [DiscriminatorBlock(depth, 2 * depth)]
 
         for i in range(1, upsample):
@@ -359,7 +355,7 @@ class Discriminator(nn.Module):
             in_channels = min(depth * m, 512)
             out_channels = min(depth * m * 2, 512)
 
-            from_rgb.append(Conv2d(3, depth, 1))
+            from_rgb.append(Conv2d(3, depth, 3, padding=1))
             progression.append(DiscriminatorBlock(in_channels + depth, out_channels))
 
         """
@@ -372,7 +368,7 @@ class Discriminator(nn.Module):
         5, [b, 64 * depth, h, w]
         """
 
-        self.final_from_rgb = Conv2d(3, depth, 1)
+        self.final_from_rgb = Conv2d(3, depth, 3, padding=1)
         self.progression = nn.ModuleList(progression)
         self.from_rgb = nn.ModuleList(from_rgb)
         self.upsample = upsample
