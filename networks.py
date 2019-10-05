@@ -199,11 +199,11 @@ class GeneratorBlock(nn.Module):
 
 class Generator(nn.Module):
 
-    def __init__(self, initial_size, z_dimension=128, upsample=6, depth=16):
+    def __init__(self, z_dimension=128, initial_size=(4, 4), upsample=6, depth=16):
         """
         Arguments:
-            initial_size: a tuple of integers (h, w).
             z_dimension: an integer.
+            initial_size: a tuple of integers (h, w).
             upsample: an integer.
             depth: an integer.
         """
@@ -271,11 +271,9 @@ class DiscriminatorBlock(nn.Module):
         super().__init__()
 
         self.layers = nn.Sequential(
-            Conv2d(in_channels, out_channels, 3, padding=1, bias=False),
-            nn.InstanceNorm2d(out_channels, affine=True),
+            Conv2d(in_channels, out_channels, 3, padding=1),
             nn.LeakyReLU(0.2, inplace=True),
-            Conv2d(out_channels, out_channels, 3, padding=1, bias=False),
-            nn.InstanceNorm2d(out_channels, affine=True),
+            Conv2d(out_channels, out_channels, 3, padding=1),
             nn.LeakyReLU(0.2, inplace=True),
             nn.AvgPool2d(2)
         )
@@ -318,11 +316,9 @@ class FinalDiscriminatorBlock(nn.Module):
 
         self.layers = nn.Sequential(
             MinibatchStdDev(),
-            Conv2d(in_channels + 1, in_channels, 3, padding=1, bias=False),
-            nn.InstanceNorm2d(out_channels, affine=True),
+            Conv2d(in_channels + 1, in_channels, 3, padding=1),
             nn.LeakyReLU(0.2, inplace=True),
-            Conv2d(in_channels, in_channels, kernel_size=(h, w), bias=False),
-            nn.InstanceNorm2d(out_channels, affine=True),
+            Conv2d(in_channels, in_channels, kernel_size=(h, w)),
             nn.LeakyReLU(0.2, inplace=True),
             Conv2d(in_channels, 1, 1)
         )
@@ -340,7 +336,7 @@ class FinalDiscriminatorBlock(nn.Module):
 
 class Discriminator(nn.Module):
 
-    def __init__(self, initial_size, upsample=6, depth=16):
+    def __init__(self, initial_size=(4, 4), upsample=6, depth=16):
         """
         Arguments:
             initial_size: a tuple of integers (h, w).
@@ -349,7 +345,6 @@ class Discriminator(nn.Module):
         """
         super().__init__()
 
-        assert upsample >= 5
         from_rgb = [Conv2d(3, depth, 3, padding=1)]
         progression = [DiscriminatorBlock(depth, 2 * depth)]
 
@@ -375,6 +370,8 @@ class Discriminator(nn.Module):
         self.final_from_rgb = Conv2d(3, depth, 3, padding=1)
         self.progression = nn.ModuleList(progression)
         self.from_rgb = nn.ModuleList(from_rgb)
+
+        self.out_channels = out_channels + depth
         self.upsample = upsample
 
     def forward(self, inputs):
@@ -384,7 +381,7 @@ class Discriminator(nn.Module):
             has shape [b, 3, s * h, s * h] with s = 2 ** i.
             Integer `i` is in range [0, upsample].
         Returns:
-            a float tensor with shape [b, 16 + 512, h, w].
+            a float tensor with shape [b, out_channels, h, w].
         """
         upsample = self.upsample
 

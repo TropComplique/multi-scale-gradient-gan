@@ -17,23 +17,24 @@ from networks import FinalDiscriminatorBlock
 from torch.backends import cudnn
 cudnn.benchmark = True
 
+
+DEVICES = [torch.device('cuda:0'), torch.device('cuda:1')]
 WIDTH, HEIGHT = 256, 384
 UPSAMPLE = 6  # number of upsamplings
 
 BATCH_SIZE = 128
-DEVICES = [torch.device('cuda:0'), torch.device('cuda:1')]
-NUM_ITERATIONS = 42000  # 68 iterations in one epoch
+NUM_ITERATIONS = 68000  # 68 iterations in one epoch
 IMAGES_PATH = '/home/dan/datasets/feidegger/images/'  # it contains 8792 images
 LOGS_DIR = 'summaries/'
-MODELS_DIR = 'checkpoints/'
 PLOT_IMAGE_STEP = 200
+MODELS_DIR = 'checkpoints/'
 SAVE_EPOCH = 50
 
 
 def train():
 
     epoch = 1
-    progress_bar = tqdm(range(NUM_ITERATIONS))
+    progress_bar = tqdm(range(NUM_ITERATIONS + 1))
     writer = SummaryWriter(LOGS_DIR)
 
     dataset = Images(folder=IMAGES_PATH, size=(HEIGHT, WIDTH))
@@ -47,11 +48,11 @@ def train():
     assert WIDTH % s == 0 and HEIGHT % s == 0
     initial_size = (HEIGHT // s, WIDTH // s)
 
-    generator = Generator(initial_size, z_dimension, upsample=UPSAMPLE, depth=depth).to(DEVICES[0])
-    discriminator = Discriminator(initial_size, upsample=UPSAMPLE, depth=depth).to(DEVICES[0])
+    generator = Generator(z_dimension, initial_size, UPSAMPLE, depth).to(DEVICES[0])
+    discriminator = Discriminator(initial_size, UPSAMPLE, depth).to(DEVICES[0])
 
+    final_block = FinalDiscriminatorBlock(discriminator.out_channels, initial_size).to(DEVICES[0])
     # this block is separated because it contains MinibatchStdDev (it doesn't parallelize)
-    final_block = FinalDiscriminatorBlock(16 + 512, initial_size).to(DEVICES[0])
 
     generator = nn.DataParallel(generator, device_ids=DEVICES)
     discriminator = nn.DataParallel(discriminator, device_ids=DEVICES)
@@ -62,17 +63,19 @@ def train():
     # exponential moving average of weights
     generator_ema = copy.deepcopy(generator)
 
-    noise_vectors = []
-    for _ in range(10):
-        z = torch.randn(1, z_dimension, device=DEVICES[0])
+    def get_noise(b):
+        z = torch.randn(b, z_dimension, device=DEVICES[0])
         z = z / z.norm(p=2, dim=1, keepdim=True)
-        noise_vectors.append(z)
+        return z
+
+    # for visualization in tensorboard
+    noise_vectors = torch.split(get_noise(10), 1)
 
     for i in progress_bar:
 
         try:
             images = next(data_loader)
-            # it has shape [b, 3, h, w]
+            # it has shape [b, 3, HEIGHT, WIDTH]
 
         except (OSError, StopIteration):
 
@@ -86,7 +89,7 @@ def train():
             images = next(data_loader)
             epoch += 1
 
-        b = images.shape[0]
+        b = images.size(0)  # batch size
         images = images.to(DEVICES[0])
 
         downsampled = [images]
@@ -97,9 +100,7 @@ def train():
         # from lowest to biggest resolution
         images = downsampled[::-1]
 
-        z = torch.randn(b, z_dimension, device=DEVICES[0])
-        z = z / z.norm(p=2, dim=1, keepdim=True)
-
+        z = get_noise(b)  # shape [b, z_dimension]
         fake_images = generator(z)
         fake_images_detached = [x.detach() for x in fake_images]
 
@@ -116,7 +117,6 @@ def train():
         d_optimizer.step()
 
         discriminator.requires_grad_(False)
-
         real_scores = discriminator(images)
         fake_scores = discriminator(fake_images)
         # they have shape [b]
