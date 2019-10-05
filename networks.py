@@ -271,9 +271,11 @@ class DiscriminatorBlock(nn.Module):
         super().__init__()
 
         self.layers = nn.Sequential(
-            Conv2d(in_channels, out_channels, 3, padding=1),
+            Conv2d(in_channels, out_channels, 3, padding=1, bias=False),
+            nn.InstanceNorm2d(out_channels, affine=True),
             nn.LeakyReLU(0.2, inplace=True),
-            Conv2d(out_channels, out_channels, 3, padding=1),
+            Conv2d(out_channels, out_channels, 3, padding=1, bias=False),
+            nn.InstanceNorm2d(out_channels, affine=True),
             nn.LeakyReLU(0.2, inplace=True),
             nn.AvgPool2d(2)
         )
@@ -316,9 +318,11 @@ class FinalDiscriminatorBlock(nn.Module):
 
         self.layers = nn.Sequential(
             MinibatchStdDev(),
-            Conv2d(in_channels + 1, in_channels, 3, padding=1),
+            Conv2d(in_channels + 1, in_channels, 3, padding=1, bias=False),
+            nn.InstanceNorm2d(out_channels, affine=True),
             nn.LeakyReLU(0.2, inplace=True),
-            Conv2d(in_channels, in_channels, kernel_size=(h, w)),
+            Conv2d(in_channels, in_channels, kernel_size=(h, w), bias=False),
+            nn.InstanceNorm2d(out_channels, affine=True),
             nn.LeakyReLU(0.2, inplace=True),
             Conv2d(in_channels, 1, 1)
         )

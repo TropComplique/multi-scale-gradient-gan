@@ -20,14 +20,14 @@ cudnn.benchmark = True
 WIDTH, HEIGHT = 256, 384
 UPSAMPLE = 6  # number of upsamplings
 
-BATCH_SIZE = 64
+BATCH_SIZE = 128
 DEVICES = [torch.device('cuda:0'), torch.device('cuda:1')]
-NUM_ITERATIONS = 56000  # 137 iterations in one epoch
+NUM_ITERATIONS = 42000  # 68 iterations in one epoch
 IMAGES_PATH = '/home/dan/datasets/feidegger/images/'  # it contains 8792 images
 LOGS_DIR = 'summaries/'
 MODELS_DIR = 'checkpoints/'
-PLOT_IMAGE_STEP = 300
-SAVE_EPOCH = 25
+PLOT_IMAGE_STEP = 200
+SAVE_EPOCH = 50
 
 
 def train():
@@ -40,13 +40,15 @@ def train():
     loader = DataLoader(dataset, shuffle=True, batch_size=BATCH_SIZE, num_workers=8, drop_last=True)
     data_loader = iter(loader)
 
+    depth = 8
     z_dimension = 128
+
     s = 2 ** UPSAMPLE
     assert WIDTH % s == 0 and HEIGHT % s == 0
     initial_size = (HEIGHT // s, WIDTH // s)
 
-    generator = Generator(initial_size, z_dimension, upsample=UPSAMPLE).to(DEVICES[0])
-    discriminator = Discriminator(initial_size, upsample=UPSAMPLE).to(DEVICES[0])
+    generator = Generator(initial_size, z_dimension, upsample=UPSAMPLE, depth=depth).to(DEVICES[0])
+    discriminator = Discriminator(initial_size, upsample=UPSAMPLE, depth=depth).to(DEVICES[0])
 
     # this block is separated because it contains MinibatchStdDev (it doesn't parallelize)
     final_block = FinalDiscriminatorBlock(16 + 512, initial_size).to(DEVICES[0])
@@ -57,6 +59,7 @@ def train():
     g_optimizer = optim.Adam(generator.parameters(), lr=4e-3, betas=(0.0, 0.99))
     d_optimizer = optim.Adam(discriminator.parameters(), lr=4e-3, betas=(0.0, 0.99))
 
+    # exponential moving average of weights
     generator_ema = copy.deepcopy(generator)
 
     noise_vectors = []
