@@ -25,8 +25,8 @@ UPSAMPLE = 6  # number of upsamplings
 BATCH_SIZE = 128
 NUM_ITERATIONS = 68000  # 68 iterations in one epoch
 IMAGES_PATH = '/home/dan/datasets/feidegger/images/'  # it contains 8792 images
-LOGS_DIR = 'summaries/'
-PLOT_IMAGE_STEP = 200
+LOGS_DIR = 'summaries/run00/'
+PLOT_IMAGE_STEP = 300
 MODELS_DIR = 'checkpoints/'
 SAVE_EPOCH = 50
 
@@ -51,11 +51,12 @@ def train():
     generator = Generator(z_dimension, initial_size, UPSAMPLE, depth).to(DEVICES[0])
     discriminator = Discriminator(initial_size, UPSAMPLE, depth).to(DEVICES[0])
 
-    final_block = FinalDiscriminatorBlock(discriminator.out_channels, initial_size).to(DEVICES[0])
+    score_predictor = FinalDiscriminatorBlock(discriminator.out_channels, initial_size).to(DEVICES[0])
     # this block is separated because it contains MinibatchStdDev (it doesn't parallelize)
 
     generator = nn.DataParallel(generator, device_ids=DEVICES)
     discriminator = nn.DataParallel(discriminator, device_ids=DEVICES)
+    discriminator = nn.Sequential(discriminator, score_predictor)
 
     g_optimizer = optim.Adam(generator.parameters(), lr=4e-3, betas=(0.0, 0.99))
     d_optimizer = optim.Adam(discriminator.parameters(), lr=4e-3, betas=(0.0, 0.99))
@@ -80,7 +81,10 @@ def train():
         except (OSError, StopIteration):
 
             if epoch % SAVE_EPOCH == 0:
-                state = {'generator': generator.state_dict(), 'generator_ema': generator_ema.state_dict()}
+                state = {
+                    'generator': generator.module.state_dict(),
+                    'generator_ema': generator_ema.module.state_dict()
+                }
                 save_path = os.path.join(MODELS_DIR, f'train_epoch_{epoch}.model')
                 torch.save(state, save_path)
 
