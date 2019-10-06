@@ -22,13 +22,13 @@ DEVICES = [torch.device('cuda:0'), torch.device('cuda:1')]
 WIDTH, HEIGHT = 256, 384
 UPSAMPLE = 6  # number of upsamplings
 
-BATCH_SIZE = 128
-NUM_ITERATIONS = 68000  # 68 iterations in one epoch
+BATCH_SIZE = 64
+NUM_ITERATIONS = 68500  # 137 iterations in one epoch
 IMAGES_PATH = '/home/dan/datasets/feidegger/images/'  # it contains 8792 images
 LOGS_DIR = 'summaries/run00/'
 PLOT_IMAGE_STEP = 300
 MODELS_DIR = 'checkpoints/'
-SAVE_EPOCH = 50
+SAVE_EPOCH = 100
 
 
 def train():
@@ -41,7 +41,7 @@ def train():
     loader = DataLoader(dataset, shuffle=True, batch_size=BATCH_SIZE, num_workers=8, drop_last=True)
     data_loader = iter(loader)
 
-    depth = 8
+    depth = 16
     z_dimension = 128
 
     s = 2 ** UPSAMPLE
@@ -58,8 +58,8 @@ def train():
     discriminator = nn.DataParallel(discriminator, device_ids=DEVICES)
     discriminator = nn.Sequential(discriminator, score_predictor)
 
-    g_optimizer = optim.Adam(generator.parameters(), lr=4e-3, betas=(0.0, 0.99))
-    d_optimizer = optim.Adam(discriminator.parameters(), lr=4e-3, betas=(0.0, 0.99))
+    g_optimizer = optim.Adam(generator.parameters(), lr=2e-3, betas=(0.0, 0.99))
+    d_optimizer = optim.Adam(discriminator.parameters(), lr=2e-3, betas=(0.0, 0.99))
 
     # exponential moving average of weights
     generator_ema = copy.deepcopy(generator)
@@ -110,7 +110,7 @@ def train():
 
         real_scores = discriminator(images)
         fake_scores = discriminator(fake_images_detached)
-        # they have shape [b]
+        # they have shape [b/2] (because of pacgan)
 
         r = real_scores - fake_scores.mean()
         f = fake_scores - real_scores.mean()
@@ -123,7 +123,7 @@ def train():
         discriminator.requires_grad_(False)
         real_scores = discriminator(images)
         fake_scores = discriminator(fake_images)
-        # they have shape [b]
+        # they have shape [b/2] (because of pacgan)
 
         r = real_scores - fake_scores.mean()
         f = fake_scores - real_scores.mean()
@@ -156,7 +156,7 @@ def train():
         progress_bar.set_description(description)
 
 
-def accumulate(model_accumulator, model, decay=0.99):
+def accumulate(model_accumulator, model, decay=0.993):
 
     params = dict(model.named_parameters())
     ema_params = dict(model_accumulator.named_parameters())

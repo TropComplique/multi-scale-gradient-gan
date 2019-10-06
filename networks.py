@@ -78,7 +78,11 @@ class AdaptiveInstanceNorm(nn.Module):
         super().__init__()
 
         self.norm = nn.InstanceNorm2d(in_channels)
-        self.linear = Linear(z_dimension, 2 * in_channels)
+        self.layers = nn.Sequential(
+            Linear(z_dimension, z_dimension),
+            nn.LeakyReLU(0.2, inplace=True),
+            Linear(z_dimension, 2 * in_channels)
+        )
 
     def forward(self, x, z):
         """
@@ -89,7 +93,7 @@ class AdaptiveInstanceNorm(nn.Module):
             a float tensor with shape [b, in_channels, h, w].
         """
 
-        w = self.linear(z).unsqueeze(2).unsqueeze(3)
+        w = self.layers(z).unsqueeze(2).unsqueeze(3)
         gamma, beta = w.chunk(2, dim=1)
         # they have shape [b, in_channels, 1, 1]
 
@@ -345,7 +349,7 @@ class Discriminator(nn.Module):
         """
         super().__init__()
 
-        from_rgb = [Conv2d(3, depth, 3, padding=1)]
+        from_rgb = [Conv2d(6, depth, 3, padding=1)]
         progression = [DiscriminatorBlock(depth, 2 * depth)]
 
         for i in range(1, upsample):
@@ -354,7 +358,7 @@ class Discriminator(nn.Module):
             in_channels = min(depth * m, 512)
             out_channels = min(depth * m * 2, 512)
 
-            from_rgb.append(Conv2d(3, depth, 3, padding=1))
+            from_rgb.append(Conv2d(6, depth, 3, padding=1))
             progression.append(DiscriminatorBlock(in_channels + depth, out_channels))
 
         """
@@ -367,7 +371,7 @@ class Discriminator(nn.Module):
         5, [b, 64 * depth, h, w]
         """
 
-        self.final_from_rgb = Conv2d(3, depth, 3, padding=1)
+        self.final_from_rgb = Conv2d(6, depth, 3, padding=1)
         self.progression = nn.ModuleList(progression)
         self.from_rgb = nn.ModuleList(from_rgb)
 
@@ -385,13 +389,17 @@ class Discriminator(nn.Module):
         """
         upsample = self.upsample
 
+        b = inputs[0].size(0)  # batch size
+        inputs = [torch.cat(torch.split(x, b // 2), dim=1) for x in inputs]
+        # see the pacgan (https://arxiv.org/abs/1712.04086)
+
         x = inputs[upsample]
         x = self.from_rgb[0](x)
-        # it has shape [b, depth, s * h, s * w],
+        # it has shape [b / 2, depth, s * h, s * w],
         # where s = 2 ** depth
 
         x = self.progression[0](x)
-        # it has shape [b, 2 * depth, s * h / 2, s * w / 2]
+        # it has shape [b / 2, 2 * depth, s * h / 2, s * w / 2]
 
         for i in range(1, upsample):
 
