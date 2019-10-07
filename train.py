@@ -19,16 +19,16 @@ cudnn.benchmark = True
 
 
 DEVICES = [torch.device('cuda:0'), torch.device('cuda:1')]
-WIDTH, HEIGHT = 256, 384
-UPSAMPLE = 6  # number of upsamplings
+WIDTH, HEIGHT = 512, 768
+UPSAMPLE = 7  # number of upsamplings
 
-BATCH_SIZE = 64
-NUM_ITERATIONS = 68500  # 137 iterations in one epoch
+BATCH_SIZE = 20
+NUM_ITERATIONS = 50000  # 439 iterations in one epoch
 IMAGES_PATH = '/home/dan/datasets/feidegger/images/'  # it contains 8792 images
 LOGS_DIR = 'summaries/run00/'
 PLOT_IMAGE_STEP = 300
 MODELS_DIR = 'checkpoints/'
-SAVE_EPOCH = 100
+SAVE_EPOCH = 20
 
 
 def train():
