@@ -101,28 +101,6 @@ class AdaptiveInstanceNorm(nn.Module):
         return gamma * x + beta
 
 
-class NoiseInjection(nn.Module):
-
-    def __init__(self, in_channels):
-        super().__init__()
-
-        scaler = torch.zeros(1, in_channels, 1, 1)
-        self.scaler = nn.Parameter(scaler)
-
-    def forward(self, x):
-        """
-        Arguments:
-            x: a float tensor with shape [b, in_channels, h, w].
-        Returns:
-            a float tensor with shape [b, in_channels, h, w].
-        """
-        b, _, h, w = x.shape
-        noise = torch.randn(b, 1, h, w, device=x.device)
-
-        x += self.scaler * noise
-        return x
-
-
 class InitialGeneratorBlock(nn.Module):
 
     def __init__(self, initial_size, out_channels, z_dimension):
@@ -132,12 +110,10 @@ class InitialGeneratorBlock(nn.Module):
         constant = torch.randn(1, out_channels, h, w)
         self.constant = nn.Parameter(constant)
 
-        # self.noise1 = NoiseInjection(out_channels)
         self.relu1 = nn.LeakyReLU(0.2, inplace=True)
         self.adain1 = AdaptiveInstanceNorm(out_channels, z_dimension)
 
         self.conv2 = Conv2d(out_channels, out_channels, 3, padding=1)
-        # self.noise2 = NoiseInjection(out_channels)
         self.relu2 = nn.LeakyReLU(0.2, inplace=True)
         self.adain2 = AdaptiveInstanceNorm(out_channels, z_dimension)
 
@@ -151,12 +127,10 @@ class InitialGeneratorBlock(nn.Module):
         b = z.size(0)
         x = self.constant.repeat(b, 1, 1, 1)
 
-        # x = self.noise1(x)
         x = self.relu1(x)
         x = self.adain1(x, z)
 
         x = self.conv2(x)
-        # x = self.noise2(x)
         x = self.relu2(x)
         x = self.adain2(x, z)
 
@@ -169,12 +143,10 @@ class GeneratorBlock(nn.Module):
         super().__init__()
 
         self.conv1 = Conv2d(in_channels, out_channels, 3, padding=1)
-        # self.noise1 = NoiseInjection(out_channels)
         self.relu1 = nn.LeakyReLU(0.2, inplace=True)
         self.adain1 = AdaptiveInstanceNorm(out_channels, z_dimension)
 
         self.conv2 = Conv2d(out_channels, out_channels, 3, padding=1)
-        # self.noise2 = NoiseInjection(out_channels)
         self.relu2 = nn.LeakyReLU(0.2, inplace=True)
         self.adain2 = AdaptiveInstanceNorm(out_channels, z_dimension)
 
@@ -189,12 +161,10 @@ class GeneratorBlock(nn.Module):
         x = F.interpolate(x, scale_factor=2, mode='bilinear', align_corners=False)
 
         x = self.conv1(x)
-        # x = self.noise1(x)
         x = self.relu1(x)
         x = self.adain1(x, z)
 
         x = self.conv2(x)
-        # x = self.noise2(x)
         x = self.relu2(x)
         x = self.adain2(x, z)
 

@@ -1,11 +1,11 @@
 import torch
 from torch import optim
 from torch import nn
+from torch.autograd import grad
 from torch.nn import functional as F
 from torch.utils.data import DataLoader, Dataset
 from torch.utils.tensorboard import SummaryWriter
 from torchvision import transforms
-#from torch.autograd import grad
 
 import math
 import os
@@ -23,10 +23,10 @@ DEVICES = [torch.device('cuda:0'), torch.device('cuda:1')]
 WIDTH, HEIGHT = 512, 768
 UPSAMPLE = 7  # number of upsamplings
 
-BATCH_SIZE = 20
+BATCH_SIZE = 20  # must be divisible by 2 * num_gpus
 NUM_ITERATIONS = 100000  # 439 iterations in one epoch
 IMAGES_PATH = '/home/dan/datasets/feidegger/images/'  # it contains 8792 images
-LOGS_DIR = 'summaries/run01/' #  no r1
+LOGS_DIR = 'summaries/run00/'
 PLOT_IMAGE_STEP = 300
 MODELS_DIR = 'checkpoints/'
 SAVE_EPOCH = 10
@@ -96,8 +96,8 @@ def train():
 
         b = images.size(0)  # batch size
         images = images.to(DEVICES[0])
-        #images.requires_grad = True
-        
+        images.requires_grad = True
+
         downsampled = [images]
         for _ in range(UPSAMPLE):
             images = F.avg_pool2d(images, 2)
@@ -117,18 +117,21 @@ def train():
         r = real_scores - fake_scores.mean()
         f = fake_scores - real_scores.mean()
         discriminator_loss = F.relu(1.0 - r).mean() + F.relu(1.0 + f).mean()
-        
-        #g = grad(real_scores.sum(), images, create_graph=True)[0]
+
+        g = grad(real_scores.sum(), images, create_graph=True)[0]
         # it has shape [b, 3, h, w]
 
-        #R1 = 0.5 * g.view(b, -1).pow(2).sum(1).mean(0)
+        R1 = 0.5 * g.view(b, -1).pow(2).sum(1).mean(0)
+        # it has shape []
 
         d_optimizer.zero_grad()
-        discriminator_loss.backward()  #  + 1.0 * R1
+        (discriminator_loss + R1).backward()
         d_optimizer.step()
 
         discriminator.requires_grad_(False)
-        real_scores = discriminator([x.detach() for x in real_images])
+        real_images_detached = [x.detach() for x in real_images]
+
+        real_scores = discriminator(real_images_detached)
         fake_scores = discriminator(fake_images)
         # they have shape [b/2] (because of pacgan)
 
@@ -145,10 +148,11 @@ def train():
 
         g = generator_loss.item()
         d = discriminator_loss.item()
+        r = R1.item()
 
         writer.add_scalar('losses/generator_loss', g, i)
         writer.add_scalar('losses/discriminator_loss', d, i)
-        #writer.add_scalar('losses/R1_penalty', R1.item(), i)
+        writer.add_scalar('losses/R1_penalty', r, i)
 
         if i % PLOT_IMAGE_STEP == 0:
 
