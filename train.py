@@ -5,11 +5,12 @@ from torch.nn import functional as F
 from torch.utils.data import DataLoader, Dataset
 from torch.utils.tensorboard import SummaryWriter
 from torchvision import transforms
+#from torch.autograd import grad
 
 import math
 import os
 import copy
-from PIL import Image
+from PIL import Image, ImageFilter
 from tqdm import tqdm
 from networks import Generator, Discriminator
 from networks import FinalDiscriminatorBlock
@@ -23,12 +24,12 @@ WIDTH, HEIGHT = 512, 768
 UPSAMPLE = 7  # number of upsamplings
 
 BATCH_SIZE = 20
-NUM_ITERATIONS = 50000  # 439 iterations in one epoch
+NUM_ITERATIONS = 100000  # 439 iterations in one epoch
 IMAGES_PATH = '/home/dan/datasets/feidegger/images/'  # it contains 8792 images
-LOGS_DIR = 'summaries/run00/'
+LOGS_DIR = 'summaries/run01/' #  no r1
 PLOT_IMAGE_STEP = 300
 MODELS_DIR = 'checkpoints/'
-SAVE_EPOCH = 20
+SAVE_EPOCH = 10
 
 
 def train():
@@ -58,8 +59,8 @@ def train():
     discriminator = nn.DataParallel(discriminator, device_ids=DEVICES)
     discriminator = nn.Sequential(discriminator, score_predictor)
 
-    g_optimizer = optim.Adam(generator.parameters(), lr=2e-3, betas=(0.0, 0.99))
-    d_optimizer = optim.Adam(discriminator.parameters(), lr=2e-3, betas=(0.0, 0.99))
+    g_optimizer = optim.Adam(generator.parameters(), lr=1e-3, betas=(0.0, 0.99))
+    d_optimizer = optim.Adam(discriminator.parameters(), lr=1e-3, betas=(0.0, 0.99))
 
     # exponential moving average of weights
     generator_ema = copy.deepcopy(generator)
@@ -95,33 +96,39 @@ def train():
 
         b = images.size(0)  # batch size
         images = images.to(DEVICES[0])
-
+        #images.requires_grad = True
+        
         downsampled = [images]
         for _ in range(UPSAMPLE):
             images = F.avg_pool2d(images, 2)
             downsampled.append(images)
 
         # from lowest to biggest resolution
-        images = downsampled[::-1]
+        real_images = downsampled[::-1]
 
         z = get_noise(b)  # shape [b, z_dimension]
         fake_images = generator(z)
         fake_images_detached = [x.detach() for x in fake_images]
 
-        real_scores = discriminator(images)
+        real_scores = discriminator(real_images)
         fake_scores = discriminator(fake_images_detached)
         # they have shape [b/2] (because of pacgan)
 
         r = real_scores - fake_scores.mean()
         f = fake_scores - real_scores.mean()
         discriminator_loss = F.relu(1.0 - r).mean() + F.relu(1.0 + f).mean()
+        
+        #g = grad(real_scores.sum(), images, create_graph=True)[0]
+        # it has shape [b, 3, h, w]
+
+        #R1 = 0.5 * g.view(b, -1).pow(2).sum(1).mean(0)
 
         d_optimizer.zero_grad()
-        discriminator_loss.backward()
+        discriminator_loss.backward()  #  + 1.0 * R1
         d_optimizer.step()
 
         discriminator.requires_grad_(False)
-        real_scores = discriminator(images)
+        real_scores = discriminator([x.detach() for x in real_images])
         fake_scores = discriminator(fake_images)
         # they have shape [b/2] (because of pacgan)
 
@@ -141,6 +148,7 @@ def train():
 
         writer.add_scalar('losses/generator_loss', g, i)
         writer.add_scalar('losses/discriminator_loss', d, i)
+        #writer.add_scalar('losses/R1_penalty', R1.item(), i)
 
         if i % PLOT_IMAGE_STEP == 0:
 
@@ -177,8 +185,15 @@ class Images(Dataset):
         self.names = os.listdir(folder)
         self.folder = folder
 
+        color_transforms = [
+            transforms.Lambda(lambda x: x.filter(ImageFilter.MedianFilter(3))),
+            transforms.ColorJitter(brightness=0, contrast=0, saturation=2.0, hue=0.5),
+            transforms.RandomGrayscale(p=0.3)
+        ]
+
         self.transform = transforms.Compose([
             transforms.Resize(size),
+            transforms.RandomChoice(color_transforms),
             transforms.RandomHorizontalFlip(),
             transforms.ToTensor()
         ])
