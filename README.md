@@ -21,8 +21,8 @@ latent vector injection with AdaIN layers.
 ## Example of generated samples
 
 ![samples](samples.jpg)
-For training I used [FEIDEGGER dataset](https://github.com/zalandoresearch/feidegger).  
-All hyperparameters that I used are in `train.py`.  
+
+For training I used [FEIDEGGER dataset](https://github.com/zalandoresearch/feidegger).  All hyperparameters that I used are in `train.py`.  
 Note that the generated samples came from different epochs.
 
 ## Requirements
