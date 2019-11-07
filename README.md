@@ -1,3 +1,5 @@
+# Multi-Scale Gradient GAN
+
 This an implementation of [MSG-GAN: Multi-Scale Gradient GAN for Stable Image Synthesis](https://arxiv.org/abs/1903.06048).
 
 ## Notes
@@ -6,7 +8,8 @@ This implementation differs from the one in the original paper.
 
 1. To regularize the discriminator I use R1 penalty.
 2. To improve sample diversity I use PacGAN discriminator.
-3. I use a stylegan-like generator (or you could call it a self modulation): latent vector injection with AdaIN layers.
+3. I use a stylegan-like generator (or you could call it a self modulation):  
+latent vector injection with AdaIN layers.
 
 ## How to train
 1. Put your images in a folder.
@@ -18,8 +21,9 @@ This implementation differs from the one in the original paper.
 ## Example of generated samples
 
 ![samples](samples.jpg)
-For training I used [FEIDEGGER dataset](https://github.com/zalandoresearch/feidegger).
-All hyperparameters that I used are in `train.py`.
+For training I used [FEIDEGGER dataset](https://github.com/zalandoresearch/feidegger).  
+All hyperparameters that I used are in `train.py`.  
+Note that the generated samples came from different epochs.
 
 ## Requirements
 1. pytorch 1.2
